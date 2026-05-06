@@ -31,6 +31,7 @@ pathDefaults:
   recordSegmentDuration: 1h
   recordDeleteAfter: 0s   # 0s = keep forever
 
+# Add new livestream paths here to be recorded
 paths:
   first:
     source: rtsp://100.86.162.126:8554/livestream
