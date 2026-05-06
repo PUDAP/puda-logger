@@ -10,13 +10,12 @@ logDestinations: [stdout]
 rtsp: yes
 rtspAddress: :8554
 rtspEncryption: "no"
-rtspAllowedIPs: []
 
 # Disable inbound protocols not needed for logging
 rtmp: no
 hls: no
 srt: no
-webRTC: no
+webrtc: no
 
 # Playback server — lets you scrub recordings via HTTP
 playback: yes
@@ -31,3 +30,9 @@ pathDefaults:
   recordMaxPartSize: 50M
   recordSegmentDuration: 1h
   recordDeleteAfter: 0s   # 0s = keep forever
+
+paths:
+  first:
+    source: rtsp://100.86.162.126:8554/livestream
+    sourceOnDemand: no
+    record: yes
