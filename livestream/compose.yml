@@ -1,0 +1,35 @@
+services:
+  config-gen:
+    image: alpine:latest
+    container_name: mediamtx-config-gen
+    volumes:
+      - ./entrypoint.sh:/entrypoint.sh:ro
+      - ./mediamtx-base.yml:/mediamtx-base.yml:ro
+      - config:/generated
+    env_file:
+      - .env
+    command: ["/bin/sh", "/entrypoint.sh"]
+    restart: "no"
+
+  mediamtx:
+    image: bluenviron/mediamtx:latest
+    container_name: mediamtx-logger
+    depends_on:
+      config-gen:
+        condition: service_completed_successfully
+    command: ["/config/mediamtx.yml"]
+    ports:
+      - "8554:8554"   # RTSP (optional, for playback)
+      - "9996:9996"   # Playback HTTP server
+    volumes:
+      - config:/config:ro
+      - ${RECORDINGS_DIR:-./recordings}:/recordings
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    restart: unless-stopped
+
+volumes:
+  config:

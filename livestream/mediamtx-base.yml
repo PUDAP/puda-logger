@@ -1,0 +1,33 @@
+###############################################
+# mediamtx logger — base configuration
+# Stream paths are generated dynamically by entrypoint.sh from .env
+###############################################
+
+logLevel: info
+logDestinations: [stdout]
+
+# RTSP (used to pull from source streams, and optionally for playback)
+rtsp: yes
+rtspAddress: :8554
+rtspEncryption: "no"
+rtspAllowedIPs: []
+
+# Disable inbound protocols not needed for logging
+rtmp: no
+hls: no
+srt: no
+webRTC: no
+
+# Playback server — lets you scrub recordings via HTTP
+playback: yes
+playbackAddress: :9996
+
+# Default recording settings (overridable per path in entrypoint.sh)
+pathDefaults:
+  record: no
+  recordPath: /recordings/%path/%Y-%m-%d_%H-%M-%S-%f
+  recordFormat: fmp4
+  recordPartDuration: 1s
+  recordMaxPartSize: 50M
+  recordSegmentDuration: 1h
+  recordDeleteAfter: 0s   # 0s = keep forever
