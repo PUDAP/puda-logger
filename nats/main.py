@@ -11,7 +11,7 @@ from dotenv import load_dotenv
 from nats.aio.msg import Msg
 from puda import StreamSubscriber
 from puda.models import NATSMessage
-from puda_db import DatabaseClient
+from db_client import DatabaseClient
 
 # Load environment variables from .env file
 load_dotenv()
