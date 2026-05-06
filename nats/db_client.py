@@ -131,21 +131,29 @@ class DatabaseClient:
         if conn is None:
             raise RuntimeError("Failed to establish database connection")
         
-        with conn.cursor() as cur:  # type: ignore[attr-defined]  # pylint: disable=no-member
-            cur.execute(
-                """
-                INSERT INTO command_log (run_id, created_at, step_number, payload, machine_id, command_type)
-                VALUES (%(run_id)s, %(created_at)s, %(step_number)s, %(payload)s::jsonb, %(machine_id)s, %(command_type)s)
-                """,
-                {
-                    'run_id': run_id,
-                    'machine_id': machine_id,
-                    'command_type': command_type,
-                    'created_at': created_at,
-                    'step_number': step_number,
-                    'payload': payload
-                }
-            )
-        conn.commit()  # type: ignore[attr-defined]  # pylint: disable=no-member
-        logger.info("Inserted command log entry into the database")
+        try:
+            with conn.cursor() as cur:  # type: ignore[attr-defined]  # pylint: disable=no-member
+                cur.execute(
+                    """
+                    INSERT INTO command_log (run_id, created_at, step_number, payload, machine_id, command_type)
+                    VALUES (%(run_id)s, %(created_at)s, %(step_number)s, %(payload)s::jsonb, %(machine_id)s, %(command_type)s)
+                    """,
+                    {
+                        'run_id': run_id,
+                        'machine_id': machine_id,
+                        'command_type': command_type,
+                        'created_at': created_at,
+                        'step_number': step_number,
+                        'payload': payload
+                    }
+                )
+            conn.commit()  # type: ignore[attr-defined]  # pylint: disable=no-member
+            logger.info("Inserted command log entry into the database")
+        except psycopg.errors.ForeignKeyViolation:
+            conn.rollback()  # type: ignore[attr-defined]  # pylint: disable=no-member
+            logger.warning("Skipping command log for unknown run_id=%s", run_id)
+        except Exception:
+            conn.rollback()  # type: ignore[attr-defined]  # pylint: disable=no-member
+            logger.exception("Failed to insert command log for run_id=%s; transaction rolled back", run_id)
+            raise
         
