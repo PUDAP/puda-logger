@@ -1,5 +1,5 @@
 [project]
-name = "logger"
+name = "postgres-logger"
 version = "0.1.0"
 description = "Logger service that listens to NATS command/response streams and logs to PostgreSQL"
 readme = "README.md"

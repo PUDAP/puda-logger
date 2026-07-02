@@ -1,0 +1,49 @@
+services:
+  influxdb-init:
+    image: alpine:3
+    command: sh -c "chown -R 1500:1500 /data"
+    volumes:
+      - influxdb_data:/data
+
+  influxdb:
+    image: influxdb:3.9.2-core
+    container_name: influxdb-logger-influxdb
+    restart: unless-stopped
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+    ports:
+      - "${INFLUXDB_PORT:-8181}:8181"
+    volumes:
+      - influxdb_data:/home/influxdb3/.influxdb
+      - ./admin-token.json:/run/secrets/admin-token:ro
+    env_file:
+      - path: .env.example
+        required: true
+      - path: .env
+        required: false
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-H", "Authorization: Bearer ${INFLUXDB_TOKEN}", "http://localhost:8181/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    depends_on:
+      influxdb-init:
+        condition: service_completed_successfully
+
+  influxdb-logger:
+    build: .
+    image: ghcr.io/pudap/influxdb-logger:latest
+    container_name: influxdb-logger
+    restart: unless-stopped
+    network_mode: host
+    env_file:
+      - path: .env
+        required: true
+    depends_on:
+      influxdb:
+        condition: service_healthy
+
+volumes:
+  influxdb_data:
