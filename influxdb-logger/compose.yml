@@ -9,8 +9,7 @@ services:
     restart: unless-stopped
     network_mode: host
     env_file:
-      - path: .env
-        required: true
+      - .env
     depends_on:
       influxdb:
         condition: service_healthy

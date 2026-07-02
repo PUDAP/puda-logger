@@ -19,10 +19,7 @@ services:
       - influxdb_data:/home/influxdb3/.influxdb
       - ./admin-token.json:/run/secrets/admin-token:ro
     env_file:
-      - path: .env.example
-        required: true
-      - path: .env
-        required: false
+      - .env
     healthcheck:
       test: ["CMD", "curl", "-f", "-H", "Authorization: Bearer ${INFLUXDB_TOKEN}", "http://localhost:8181/health"]
       interval: 10s
