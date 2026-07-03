@@ -1,6 +1,3 @@
-include:
-  - compose.influxdb.yml
-
 services:
   influxdb-logger:
     build: .
@@ -10,6 +7,3 @@ services:
     network_mode: host
     env_file:
       - .env
-    depends_on:
-      influxdb:
-        condition: service_healthy

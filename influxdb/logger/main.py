@@ -7,7 +7,19 @@ Streams PUDA NATS machine traffic and writes to InfluxDB:
 
 Topic routing:
   puda.*.tlm.health                     → machine_status
-  puda.*.cmd.>                          → machine_commands
+  puda.*.cmd.queue, puda.*.cmd.immediate            → machine_commands (plain core subscribe)
+  puda.*.cmd.response.queue, .../response.immediate → machine_commands (durable JetStream subscribe)
+
+Command/response subjects are published via JetStream (see puda-comms
+EdgeNatsClient). Commands live on WorkQueue-retention streams, which only
+allow one interested consumer per subject (the machine's own execution
+consumer) — adding a second one here would steal deliveries from the
+machine, so those are only observed via a plain, passive core subscription.
+Responses live on Interest-retention streams, which support fan-out to
+multiple consumers, so we bind a *durable* JetStream consumer to them. That
+guarantees delivery is replayed after any logger downtime/restart instead of
+being silently and permanently lost (which a plain core subscription would
+otherwise do for a message published while we're disconnected).
 
 Status mapping:
   - machines         : "online" when health received, "offline" after 30s silence
@@ -25,6 +37,8 @@ from datetime import datetime, timezone
 from influxdb_client_3 import InfluxDBClient3, Point, WritePrecision
 import nats
 from nats.aio.msg import Msg
+from nats.js.api import StreamConfig
+from nats.js.errors import NotFoundError
 
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -59,6 +73,15 @@ NATS_RECONNECT_WAIT_SECS = float(os.getenv("NATS_RECONNECT_WAIT_SECS", "2"))
 HEALTH_STALL_TIMEOUT_SECS = float(os.getenv("HEALTH_STALL_TIMEOUT_SECS", "90"))
 TLM_WRITE_INTERVAL_SECS = float(os.getenv("TLM_WRITE_INTERVAL_SECS", "5"))
 WRITE_QUEUE_MAXSIZE = int(os.getenv("WRITE_QUEUE_MAXSIZE", "10000"))
+
+# ── JetStream response streams (see puda-comms EdgeNatsClient) ────────────────
+# These names/subjects/retention must match what the machine edges create.
+STREAM_RESPONSE_QUEUE = "RESPONSE_QUEUE"
+STREAM_RESPONSE_IMMEDIATE = "RESPONSE_IMMEDIATE"
+RESPONSE_QUEUE_SUBJECT = "puda.*.cmd.response.queue"
+RESPONSE_IMMEDIATE_SUBJECT = "puda.*.cmd.response.immediate"
+RESPONSE_DURABLE_QUEUE = "influxdb_logger_response_queue"
+RESPONSE_DURABLE_IMMEDIATE = "influxdb_logger_response_immediate"
 # ── shared state (written by main thread, read by offline monitor) ────────────
 last_seen: dict[str, float | None] = {}
 last_status: dict[str, str] = {}
@@ -129,6 +152,21 @@ def _safe_int(value) -> int:
 
 def _is_response_message(topic: str, body: dict) -> bool:
     return topic.startswith("response") or "response" in body
+
+
+async def _ensure_response_stream(js, stream_name: str, subject: str) -> None:
+    """Ensure a response stream exists with Interest retention (idempotent).
+
+    Mirrors EdgeNatsClient._ensure_stream so the logger doesn't depend on a
+    machine edge having connected first to create the stream.
+    """
+    try:
+        await js.stream_info(stream_name)
+    except NotFoundError:
+        logger.info("Creating %s stream: subject=%s", stream_name, subject)
+        await js.add_stream(StreamConfig(name=stream_name, subjects=[subject], retention="interest"))
+    except Exception:
+        logger.exception("Error checking/creating stream %s", stream_name)
 
 
 # ── health ────────────────────────────────────────────────────────────────────
@@ -448,18 +486,53 @@ async def main() -> None:
         reconnect_time_wait=NATS_RECONNECT_WAIT_SECS,
     )
     logger.info("Connected to NATS at %s", nc.connected_url.netloc)
+    js = nc.jetstream()
     try:
         async def callback(msg: Msg) -> None:
             enqueue_message(telemetry_queue, command_queue, msg)
 
+        # Plain core subscriptions: telemetry, plus command *requests*. Commands
+        # live on WorkQueue-retention streams where only one consumer per
+        # subject is allowed (the machine's own execution consumer) — a passive
+        # core subscription observes the same bytes on the wire without
+        # registering as a competing consumer, so it can't steal deliveries.
         subjects = (
             "puda.*.tlm.heartbeat",
             "puda.*.tlm.health",
-            "puda.*.cmd.>",
+            "puda.*.cmd.queue",
+            "puda.*.cmd.immediate",
         )
         for subject in subjects:
             await nc.subscribe(subject, cb=callback)
             logger.info("Subscribed to %s", subject)
+
+        # Durable JetStream subscriptions: command *responses*. These live on
+        # Interest-retention streams, which support fan-out to multiple
+        # consumers, so a durable consumer here is safe and — unlike a plain
+        # core subscription — guarantees redelivery of anything published
+        # while this logger was offline/reconnecting instead of losing it
+        # forever. Queue commands in particular can take minutes to complete,
+        # giving a wide window for a plain subscription to miss the response.
+        async def response_callback(msg: Msg) -> None:
+            enqueue_message(telemetry_queue, command_queue, msg)
+            await msg.ack()
+
+        for stream_name, subject, durable in (
+            (STREAM_RESPONSE_QUEUE, RESPONSE_QUEUE_SUBJECT, RESPONSE_DURABLE_QUEUE),
+            (STREAM_RESPONSE_IMMEDIATE, RESPONSE_IMMEDIATE_SUBJECT, RESPONSE_DURABLE_IMMEDIATE),
+        ):
+            await _ensure_response_stream(js, stream_name, subject)
+            await js.subscribe(
+                subject,
+                stream=stream_name,
+                durable=durable,
+                cb=response_callback,
+                manual_ack=True,
+            )
+            logger.info(
+                "Subscribed to %s (durable JetStream consumer: %s, stream: %s)",
+                subject, durable, stream_name,
+            )
 
         await asyncio.Future()
     except asyncio.CancelledError:

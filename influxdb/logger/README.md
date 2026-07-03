@@ -7,7 +7,9 @@ Streams PUDA NATS machine traffic and writes to InfluxDB.
 | Measurement | Populated by | Description |
 |---|---|---|
 | `machine_status` | `puda.*.tlm.health` | Real-time status timeline per machine |
-| `machine_commands` | `puda.*.cmd.>` | Command/response log |
+| `machine_commands` | `puda.*.cmd.queue`, `puda.*.cmd.immediate` (commands), `puda.*.cmd.response.queue`, `puda.*.cmd.response.immediate` (responses) | Command/response log |
+
+Command *requests* are observed via a plain core NATS subscription (safe, since the underlying streams use WorkQueue retention where only the machine's own execution consumer may bind). Command *responses* are consumed via a **durable JetStream consumer** (`influxdb_logger_response_queue` / `influxdb_logger_response_immediate`) bound to the Interest-retention response streams, so a response published while the logger is offline/restarting is redelivered on reconnect instead of being silently lost — this matters most for queue commands, which can take minutes to complete.
 
 ## Configuration
 
@@ -32,7 +34,7 @@ Streams PUDA NATS machine traffic and writes to InfluxDB.
 Create `admin-token.json` with your InfluxDB admin token before first start:
 
 ```bash
-echo '"apiv3_puda"' > admin-token.json
+echo '{"token": "apiv3_puda", "name": "_admin", "description": "Preconfigured admin token for influxdb-logger"}' > ../influxdb/admin-token.json
 docker compose up -d
 ```
 
