@@ -59,8 +59,8 @@ def make_influx_client() -> InfluxDBClient3:
 
 # ── InfluxDB ──────────────────────────────────────────────────────────────────
 INFLUXDB_URL      = os.getenv("INFLUXDB_URL",      "http://localhost:8181")
-INFLUXDB_TOKEN    = os.getenv("INFLUXDB_TOKEN",    "apiv3_puda")
-INFLUXDB_DATABASE = os.getenv("INFLUXDB_DATABASE", "machines")
+INFLUXDB_TOKEN    = os.getenv("INFLUXDB_TOKEN",    "token")
+INFLUXDB_DATABASE = os.getenv("INFLUXDB_DATABASE", "puda")
 INFLUXDB_WRITE_TIMEOUT_MS = int(os.getenv("INFLUXDB_WRITE_TIMEOUT_MS", "5000"))
 
 # ── PUDA / NATS ───────────────────────────────────────────────────────────────
