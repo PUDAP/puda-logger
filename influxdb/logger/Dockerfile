@@ -1,8 +1,11 @@
-FROM python:3.12-slim
+FROM telegraf:1.39
 
-WORKDIR /app
+USER root
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends gettext-base \
+    && rm -rf /var/lib/apt/lists/*
 
-COPY pyproject.toml main.py ./
-RUN pip install --no-cache-dir .
+COPY docker-entrypoint.sh /docker-entrypoint.sh
+RUN chmod +x /docker-entrypoint.sh
 
-CMD ["python", "-u", "main.py"]
+ENTRYPOINT ["/docker-entrypoint.sh"]

@@ -1,0 +1,229 @@
+[agent]
+  interval = "10s"
+  flush_interval = "5s"
+  metric_batch_size = 1000
+  metric_buffer_limit = 100000
+
+# Command requests: puda.*.cmd.queue, puda.*.cmd.immediate
+[[inputs.nats_consumer]]
+  name_override = "commands"
+  servers = ${NATS_SERVERS}
+  subjects = ["puda.*.cmd.*"]
+  queue_group = "puda_logger_cmd_requests"
+  data_format = "json_v2"
+
+  [inputs.nats_consumer.tags]
+    msg_type = "command"
+    status = "sent"
+
+  [[inputs.nats_consumer.json_v2]]
+    timestamp_path = "header.timestamp"
+    timestamp_format = "2006-01-02T15:04:05Z07:00"
+    timestamp_timezone = "UTC"
+
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.machine_id"
+      rename = "machine_id"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.username"
+      rename = "username"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.run_id"
+      rename = "run_id"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "command.name"
+      rename = "cmd_name"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "header.user_id"
+      rename = "user_id"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "command.step_number"
+      rename = "step_number"
+      type = "int"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "command.version"
+      rename = "cmd_version"
+      optional = true
+
+# Command responses: puda.*.cmd.response.queue
+[[inputs.nats_consumer]]
+  name_override = "commands"
+  servers = ${NATS_SERVERS}
+  jetstream_subjects = ["puda.*.cmd.response.queue"]
+  jetstream_stream = "RESPONSE_QUEUE"
+  queue_group = "puda_logger_cmd_responses_queue"
+  data_format = "json_v2"
+
+  [inputs.nats_consumer.tags]
+    msg_type = "response"
+
+  [[inputs.nats_consumer.json_v2]]
+    timestamp_path = "header.timestamp"
+    timestamp_format = "2006-01-02T15:04:05Z07:00"
+    timestamp_timezone = "UTC"
+
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.machine_id"
+      rename = "machine_id"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.username"
+      rename = "username"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.run_id"
+      rename = "run_id"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "response.status"
+      rename = "status"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "command.name"
+      rename = "cmd_name"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "header.user_id"
+      rename = "user_id"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "command.step_number"
+      rename = "step_number"
+      type = "int"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "command.version"
+      rename = "cmd_version"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "response.code"
+      rename = "response_code"
+      type = "string"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "response.message"
+      rename = "response_message"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "response.completed_at"
+      rename = "completed_at"
+      optional = true
+
+# Command responses: puda.*.cmd.response.immediate
+[[inputs.nats_consumer]]
+  name_override = "commands"
+  servers = ${NATS_SERVERS}
+  jetstream_subjects = ["puda.*.cmd.response.immediate"]
+  jetstream_stream = "RESPONSE_IMMEDIATE"
+  queue_group = "puda_logger_cmd_responses_immediate"
+  data_format = "json_v2"
+
+  [inputs.nats_consumer.tags]
+    msg_type = "response"
+
+  [[inputs.nats_consumer.json_v2]]
+    timestamp_path = "header.timestamp"
+    timestamp_format = "2006-01-02T15:04:05Z07:00"
+    timestamp_timezone = "UTC"
+
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.machine_id"
+      rename = "machine_id"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.username"
+      rename = "username"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "header.run_id"
+      rename = "run_id"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "response.status"
+      rename = "status"
+      optional = true
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "command.name"
+      rename = "cmd_name"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "header.user_id"
+      rename = "user_id"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "command.step_number"
+      rename = "step_number"
+      type = "int"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "command.version"
+      rename = "cmd_version"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "response.code"
+      rename = "response_code"
+      type = "string"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "response.message"
+      rename = "response_message"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "response.completed_at"
+      rename = "completed_at"
+      optional = true
+
+# Telemetry: puda.*.tlm.health
+# Wire format varies by machine; store the raw JSON payload as data.
+[[inputs.nats_consumer]]
+  name_override = "telemetry"
+  servers = ${NATS_SERVERS}
+  subjects = ["puda.*.tlm.health"]
+  queue_group = "puda_logger_telemetry"
+  data_format = "value"
+  data_type = "string"
+
+# Store raw telemetry JSON and use the payload timestamp when present.
+[[processors.starlark]]
+  namepass = ["telemetry"]
+  source = '''
+load("json.star", "json")
+load("time.star", "time")
+
+def apply(metric):
+    raw = metric.fields.get("value")
+    if raw == None:
+        return metric
+
+    metric.fields["data"] = raw
+    metric.fields.pop("value")
+
+    data = json.decode(raw)
+    ts = data.get("timestamp")
+    if type(ts) == "string" and len(ts) > 0:
+        t = time.parse_time(ts, format="2006-01-02T15:04:05Z07:00", location="UTC")
+        metric.time = t.unix_nano
+
+    return metric
+'''
+
+# Derive topic from NATS subject: puda.first.cmd.response.queue -> response.queue
+[[processors.regex]]
+  namepass = ["commands"]
+  [[processors.regex.tags]]
+    key = "subject"
+    pattern = '^puda\.[^.]+\.cmd\.(.+)$'
+    replacement = "${1}"
+    result_key = "topic"
+
+# Derive machine_id from NATS subject: puda.first.tlm.health -> first
+[[processors.regex]]
+  namepass = ["telemetry"]
+  [[processors.regex.tags]]
+    key = "subject"
+    pattern = '^puda\.([^.]+)\.tlm\.health$'
+    replacement = "${1}"
+    result_key = "machine_id"
+
+[[outputs.influxdb_v2]]
+  urls = ["${INFLUXDB_URL}"]
+  token = "${INFLUXDB_TOKEN}"
+  organization = "${INFLUXDB_ORGANIZATION}"
+  bucket = "${INFLUXDB_DATABASE}"

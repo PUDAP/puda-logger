@@ -1,48 +1,91 @@
 # influxdb-logger
 
-Streams PUDA NATS machine traffic and writes to InfluxDB.
+Streams PUDA NATS machine traffic to InfluxDB using [Telegraf](https://docs.influxdata.com/telegraf/).
 
 ## Measurements
 
-| Measurement | Populated by | Description |
+| Measurement | NATS subjects | Description |
 |---|---|---|
-| `machine_status` | `puda.*.tlm.health` | Real-time status timeline per machine |
-| `machine_commands` | `puda.*.cmd.queue`, `puda.*.cmd.immediate` (commands), `puda.*.cmd.response.queue`, `puda.*.cmd.response.immediate` (responses) | Command/response log |
+| `commands` | `puda.*.cmd.*` (requests), `puda.*.cmd.response.*` (responses) | Command/response log |
+| `telemetry` | `puda.*.tlm.health` | Machine health metrics (`cpu`, `mem`, `temp`) |
 
-Command *requests* are observed via a plain core NATS subscription (safe, since the underlying streams use WorkQueue retention where only the machine's own execution consumer may bind). Command *responses* are consumed via a **durable JetStream consumer** (`influxdb_logger_response_queue` / `influxdb_logger_response_immediate`) bound to the Interest-retention response streams, so a response published while the logger is offline/restarting is redelivered on reconnect instead of being silently lost — this matters most for queue commands, which can take minutes to complete.
+### `commands` fields and tags
+
+| Kind | Name | Source |
+|---|---|---|
+| tag | `machine_id` | `header.machine_id` (commands); parsed from NATS subject (telemetry) |
+| tag | `topic` | parsed from NATS subject (`immediate`, `queue`, `response.immediate`, `response.queue`) |
+| tag | `cmd_name` | `command.name` |
+| tag | `msg_type` | static (`command` or `response`) |
+| tag | `status` | `sent` for requests; `data.response.status` for responses |
+| tag | `username` | `header.username` |
+| tag | `run_id` | `header.run_id` |
+| tag | `subject` | NATS subject (added by Telegraf) |
+| field | `user_id` | `header.user_id` |
+| field | `step_number` | `command.step_number` |
+| field | `cmd_version` | `command.version` |
+| field | `response_code` | `data.response.code` (responses only) |
+| field | `response_message` | `data.response.message` (responses only) |
+| field | `completed_at` | `data.response.completed_at` (responses only) |
+
+`topic` and `cmd_name` are tags (not fields) so points with the same header timestamp within a run do not overwrite each other in InfluxDB.
+
+### `telemetry` fields and tags
+
+| Kind | Name | Source |
+|---|---|---|
+| tag | `machine_id` | parsed from NATS subject |
+| tag | `subject` | NATS subject (added by Telegraf) |
+| field | `data` | full raw JSON payload from the machine |
+
+Telemetry schemas differ per machine. The logger stores the entire payload as `data` rather than extracting machine-specific fields.
+
+NATS messages use the raw `puda-comms` wire format (not the JSON envelope the old Python logger constructed internally).
+
+## NATS subscription model
+
+Command **requests** (`puda.*.cmd.*`) use a plain core NATS subscription. This is safe because command streams use WorkQueue retention — only the machine's execution consumer may bind as a JetStream consumer; a passive core subscription observes traffic without competing for deliveries.
+
+Command **responses** (`puda.*.cmd.response.*`) use Telegraf's `jetstream_subjects` (ephemeral JetStream push consumer) on the `RESPONSE_QUEUE` / `RESPONSE_IMMEDIATE` streams (interest retention), with explicit `jetstream_stream` bindings. Requires Telegraf **1.39+**. A `nats-stream-init` compose service creates these streams idempotently on startup.
+
+**Note:** Telegraf's `nats_consumer` plugin does not yet support durable JetStream consumers. Unlike the previous Python logger, responses published while Telegraf is offline/restarting may be missed.
 
 ## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `INFLUXDB_URL` | `http://localhost:8181` | InfluxDB host URL |
-| `INFLUXDB_TOKEN` | `apiv3_puda` | Auth token |
-| `INFLUXDB_DATABASE` | `machines` | Target database |
-| `INFLUXDB_WRITE_TIMEOUT_MS` | `5000` | Write timeout in milliseconds |
-| `NATS_SERVERS` | `nats://localhost:4222,...` | Comma-separated NATS server URLs |
-| `NATS_RECONNECT_WAIT_SECS` | `2` | Seconds between reconnect attempts |
-| `HEALTH_STALL_TIMEOUT_SECS` | `90` | Exit if no health write for this long (0 = disabled) |
-| `TLM_WRITE_INTERVAL_SECS` | `5` | Telemetry batch flush interval |
-| `WRITE_QUEUE_MAXSIZE` | `10000` | Max queued messages before exit |
-| `LOG_LEVEL` | `INFO` | Python log level |
-| `OFFLINE_TIMEOUT_SECS` | `30` | Seconds of silence before marking a machine offline |
+| `INFLUXDB_URL` | `http://localhost:8181` | InfluxDB 3 Core URL |
+| `INFLUXDB_TOKEN` | — | Auth token |
+| `INFLUXDB_DATABASE` | `puda` | Target database (written as `bucket` in `outputs.influxdb_v2`) |
+| `INFLUXDB_ORGANIZATION` | `bears` | Organization name for `outputs.influxdb_v2` |
+| `NATS_SERVERS` | — | Comma-separated NATS server URLs (`nats-stream-init` uses the first entry) |
 
 ## Running
 
 ### Docker Compose
 
-Create `admin-token.json` with your InfluxDB admin token before first start:
-
 ```bash
-echo '{"token": "apiv3_puda", "name": "_admin", "description": "Preconfigured admin token for influxdb-logger"}' > ../influxdb/admin-token.json
-docker compose up -d
+cp .env.example .env   # edit with your values
+docker compose up -d --build   # first run, or after Dockerfile/entrypoint changes
 ```
 
-The logger and InfluxDB will both start. InfluxDB data is persisted in the `influxdb_data` Docker volume. Adjust env vars via a `.env` file or inline overrides.
+The `nats-stream-init` service ensures JetStream response streams exist, then starts the Telegraf-based logger.
 
-### Local
+**Config changes:** `telegraf.conf.template` is mounted into the container. After editing it, restart without rebuilding:
 
 ```bash
-pip install .
-python main.py
+docker compose restart influxdb-logger
 ```
+
+### Local (without Docker)
+
+```bash
+export NATS_SERVERS=nats://localhost:4222
+export INFLUXDB_URL=http://localhost:8181
+export INFLUXDB_TOKEN=token
+export INFLUXDB_DATABASE=puda
+export INFLUXDB_ORGANIZATION=bears
+./docker-entrypoint.sh
+```
+
+Requires `telegraf` and `envsubst` (from `gettext`) on your PATH.
