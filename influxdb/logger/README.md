@@ -50,6 +50,8 @@ Command **responses** (`puda.*.cmd.response.*`) use Telegraf's `jetstream_subjec
 
 **Note:** Telegraf's `nats_consumer` plugin does not yet support durable JetStream consumers. Unlike the previous Python logger, responses published while Telegraf is offline/restarting may be missed.
 
+**Known failure mode:** the response consumers can silently wedge - `num_ack_pending` gets pinned at `max_ack_pending` (default 1000), NATS stops pushing new response messages to Telegraf, and nothing is logged to indicate why. The container keeps running and command *requests* (plain core NATS subscription) keep flowing normally, so this is easy to miss: `commands` measurement rows with `msg_type="response"` simply stop appearing. Restarting the container clears it. A `HEALTHCHECK` (`healthcheck.sh`) detects this by checking whether either durable consumer's ack window is fully saturated, and the `autoheal` sidecar in `compose.yml` restarts the container automatically when that happens.
+
 ## Configuration
 
 | Variable | Default | Description |

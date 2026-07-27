@@ -34,6 +34,8 @@ services:
     container_name: influxdb-logger
     restart: unless-stopped
     network_mode: host
+    labels:
+      - "autoheal=true"
     env_file:
       - .env
     volumes:
@@ -41,3 +43,19 @@ services:
     depends_on:
       nats-stream-init:
         condition: service_completed_successfully
+
+  # Docker does not restart containers on its own when a HEALTHCHECK reports
+  # "unhealthy" (only Swarm does). This watches for that status on services
+  # labeled autoheal=true and restarts them - needed because the Telegraf
+  # stall that healthcheck.sh detects otherwise persists until someone
+  # notices and manually restarts influxdb-logger.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: influxdb-logger-autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 90
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
