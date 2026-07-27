@@ -25,7 +25,11 @@ Create `server/admin-token.json`:
 **Token string rules:**
 
 - Must begin with the `apiv3_` prefix.
-- The remainder should be a cryptographically secure random string (at least 16 bytes / 128 bits of entropy).
+- The remainder should be a cryptographically secure random string (at least 16 bytes / 128 bits of entropy):
+
+  ```bash
+  echo "apiv3_$(openssl rand -hex 16)"
+  ```
 - Restrict file permissions locally:
 
 ```bash
