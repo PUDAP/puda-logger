@@ -33,7 +33,7 @@ Create `server/admin-token.json`:
 - Restrict file permissions locally:
 
 ```bash
-chmod 600 server/admin-token.json
+chmod 644 server/admin-token.json
 ```
 
 ### Option B: Generate automatically via CLI
