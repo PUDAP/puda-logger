@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  reductstore:
+    image: reduct/store:latest
+    container_name: reduct-store
+    restart: unless-stopped
+    ports:
+      - "8383:8383"
+    environment:
+      # Optional: Set an admin API token for security (Defaults to 'reduct' if not set)
+      - RS_API_TOKEN=${RS_API_TOKEN:-reduct}
+    volumes:
+      # OPTION 1: Host Bind Mount (NAS already mounted on host)
+      - ./data:/data
