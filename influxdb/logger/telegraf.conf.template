@@ -7,7 +7,13 @@
 # Command requests: puda.*.cmd.queue, puda.*.cmd.immediate
 [[inputs.nats_consumer]]
   name_override = "commands"
-  servers = ${NATS_SERVERS}
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
   subjects = ["puda.*.cmd.*"]
   queue_group = "puda_logger_cmd_requests"
   data_format = "json_v2"
@@ -51,7 +57,13 @@
 # Command responses: puda.*.cmd.response.queue
 [[inputs.nats_consumer]]
   name_override = "commands"
-  servers = ${NATS_SERVERS}
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
   jetstream_subjects = ["puda.*.cmd.response.queue"]
   jetstream_stream = "RESPONSE_QUEUE"
   queue_group = "puda_logger_cmd_responses_queue"
@@ -112,7 +124,13 @@
 # Command responses: puda.*.cmd.response.immediate
 [[inputs.nats_consumer]]
   name_override = "commands"
-  servers = ${NATS_SERVERS}
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
   jetstream_subjects = ["puda.*.cmd.response.immediate"]
   jetstream_stream = "RESPONSE_IMMEDIATE"
   queue_group = "puda_logger_cmd_responses_immediate"
@@ -170,13 +188,217 @@
       rename = "completed_at"
       optional = true
 
+# ALD point telemetry: puda.*.tlm.ald.point
+[[inputs.nats_consumer]]
+  name_override = "ald_point"
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
+  jetstream_subjects = ["puda.*.tlm.ald.point"]
+  jetstream_stream = "ALD_TELEMETRY"
+  queue_group = "puda_logger_ald_points"
+  tagexclude = ["host", "subject"]
+  data_format = "json_v2"
+
+  [[inputs.nats_consumer.json_v2]]
+    timestamp_path = "event_time"
+    timestamp_format = "2006-01-02T15:04:05Z07:00"
+    timestamp_timezone = "UTC"
+
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "machine_id"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "point_key"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "scope"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "tube"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "category"
+
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "schema"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "event_id"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "node_id"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_type"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_int"
+      type = "int"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_float"
+      type = "float"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_bool"
+      type = "bool"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_text"
+      type = "string"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "quality"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "unit"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "source_timestamp"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "server_timestamp"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "received_at"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "catalog_sha256"
+      type = "string"
+
+# ALD alarm telemetry: puda.*.tlm.ald.alarm
+[[inputs.nats_consumer]]
+  name_override = "ald_alarm"
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
+  jetstream_subjects = ["puda.*.tlm.ald.alarm"]
+  jetstream_stream = "ALD_TELEMETRY"
+  queue_group = "puda_logger_ald_alarms"
+  tagexclude = ["host", "subject"]
+  data_format = "json_v2"
+
+  [[inputs.nats_consumer.json_v2]]
+    timestamp_path = "event_time"
+    timestamp_format = "2006-01-02T15:04:05Z07:00"
+    timestamp_timezone = "UTC"
+
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "machine_id"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "point_key"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "scope"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "tube"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "category"
+    [[inputs.nats_consumer.json_v2.tag]]
+      path = "severity"
+
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "schema"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "event_id"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "node_id"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_type"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_int"
+      type = "int"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_float"
+      type = "float"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_bool"
+      type = "bool"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "value_text"
+      type = "string"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "quality"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "unit"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "source_timestamp"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "server_timestamp"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "received_at"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "catalog_sha256"
+      type = "string"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "active"
+      type = "bool"
+    [[inputs.nats_consumer.json_v2.field]]
+      path = "description"
+      type = "string"
+
 # Telemetry: puda.*.tlm.health
 # Wire format varies by machine; store the raw JSON payload as data.
 [[inputs.nats_consumer]]
   name_override = "telemetry"
-  servers = ${NATS_SERVERS}
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
   subjects = ["puda.*.tlm.health"]
   queue_group = "puda_logger_telemetry"
+  data_format = "value"
+  data_type = "string"
+
+# ALD runtime health and heartbeat are persisted in ALD_TELEMETRY so they use
+# durable JetStream consumers and the same PubAck boundary as point/alarm data.
+[[inputs.nats_consumer]]
+  name_override = "telemetry"
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
+  jetstream_subjects = ["puda.*.tlm.ald.health"]
+  jetstream_stream = "ALD_TELEMETRY"
+  queue_group = "puda_logger_ald_health"
+  data_format = "value"
+  data_type = "string"
+
+[[inputs.nats_consumer]]
+  name_override = "telemetry"
+  servers = ${NATS_SERVERS_TOML}
+  credentials = "${NATS_CREDS_FILE}"
+  secure = ${NATS_SECURE}
+  tls_ca = "${NATS_TLS_CA_FILE}"
+  tls_cert = "${NATS_TLS_CERT_FILE}"
+  tls_key = "${NATS_TLS_KEY_FILE}"
+  insecure_skip_verify = false
+  jetstream_subjects = ["puda.*.tlm.ald.heartbeat"]
+  jetstream_stream = "ALD_TELEMETRY"
+  queue_group = "puda_logger_ald_heartbeat"
   data_format = "value"
   data_type = "string"
 
@@ -201,6 +423,41 @@ def apply(metric):
         t = time.parse_time(ts, format="2006-01-02T15:04:05Z07:00", location="UTC")
         metric.time = t.unix_nano
 
+    health_fields = [
+        "opcua_connected",
+        "stale",
+        "configured_points",
+        "resolved_points",
+        "cached_points",
+        "sqlite_queue_depth",
+        "sqlite_dropped_items",
+        "sqlite_writer_ok",
+        "sqlite_writer_error_count",
+        "sqlite_writer_last_error_type",
+        "outbox_pending",
+        "outbox_published",
+        "outbox_failed_pending",
+        "reconnect_count",
+        "publisher_error_count",
+        "publisher_last_error",
+    ]
+    for field in health_fields:
+        value = data.get(field)
+        if value != None:
+            metric.fields[field] = value
+
+    return metric
+'''
+
+# Stable numeric field for dashboards regardless of the source scalar type.
+[[processors.starlark]]
+  namepass = ["ald_point", "ald_alarm"]
+  source = '''
+def apply(metric):
+    if "value_float" in metric.fields:
+        metric.fields["value_numeric"] = metric.fields["value_float"]
+    elif "value_int" in metric.fields:
+        metric.fields["value_numeric"] = float(metric.fields["value_int"])
     return metric
 '''
 
@@ -213,12 +470,12 @@ def apply(metric):
     replacement = "${1}"
     result_key = "topic"
 
-# Derive machine_id from NATS subject: puda.first.tlm.health -> first
+# Derive machine_id from legacy and ALD health/heartbeat subjects.
 [[processors.regex]]
   namepass = ["telemetry"]
   [[processors.regex.tags]]
     key = "subject"
-    pattern = '^puda\.([^.]+)\.tlm\.health$'
+    pattern = '^puda\.([^.]+)\.tlm\.(?:health|ald\.(?:health|heartbeat))$'
     replacement = "${1}"
     result_key = "machine_id"
 

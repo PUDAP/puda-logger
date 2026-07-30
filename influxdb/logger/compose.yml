@@ -1,61 +1,168 @@
 services:
   nats-stream-init:
-    image: natsio/nats-box:latest
+    image: natsio/nats-box:0.19.2@sha256:8031d190c7ee24081f3f27cc939fb647a1eeb29ebb5c60fef9b5b6c7a846d6a2
     container_name: influxdb-logger-nats-init
+    user: "${PUDA_LOGGER_RUNTIME_UID:?Set non-root logger UID}:${PUDA_LOGGER_RUNTIME_GID:?Set logger GID}"
     network_mode: host
     entrypoint: /bin/sh
     command:
       - -c
       - |
-        set -e
-        NATS_URL="$$(echo "$$NATS_SERVERS" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        if [ -z "$$NATS_URL" ]; then NATS_URL=nats://localhost:4222; fi
-        echo "Ensuring JetStream response streams on $$NATS_URL"
-        nats stream add RESPONSE_QUEUE \
-          --server "$$NATS_URL" \
-          --subjects "puda.*.cmd.response.queue" \
-          --retention interest \
-          --storage file \
-          --defaults 2>/dev/null || true
-        nats stream add RESPONSE_IMMEDIATE \
-          --server "$$NATS_URL" \
-          --subjects "puda.*.cmd.response.immediate" \
-          --retention interest \
-          --storage file \
-          --defaults 2>/dev/null || true
-        echo "JetStream response streams ready"
-    env_file:
-      - .env
+        set -eu
+        . /usr/local/lib/nats-config.sh
+        nats_validate_config
+        : "$${NATS_STREAM_REPLICAS:?NATS_STREAM_REPLICAS is required}"
+
+        ensure_response_stream() {
+          name="$$1"
+          subject="$$2"
+          if nats_cli stream info "$$name" >/dev/null 2>&1; then
+            nats_cli stream update "$$name" \
+              --subjects "$$subject" --retention interest \
+              --replicas "$$NATS_STREAM_REPLICAS" --force
+          else
+            nats_cli stream add "$$name" \
+              --subjects "$$subject" --retention interest --storage file \
+              --replicas "$$NATS_STREAM_REPLICAS" --defaults
+          fi
+          nats_cli stream info "$$name" --json | jq -e \
+            --arg name "$$name" --arg subject "$$subject" \
+            --argjson replicas "$$NATS_STREAM_REPLICAS" \
+            '(.config.name == $$name) and (.config.subjects == [$$subject]) and ((.config.retention | ascii_downcase) == "interest") and ((.config.storage | ascii_downcase) == "file") and (.config.num_replicas == $$replicas)' >/dev/null
+        }
+
+        ensure_response_stream RESPONSE_QUEUE "puda.*.cmd.response.queue"
+        ensure_response_stream RESPONSE_IMMEDIATE "puda.*.cmd.response.immediate"
+
+        if nats_cli stream info ALD_TELEMETRY >/dev/null 2>&1; then
+          nats_cli stream update ALD_TELEMETRY \
+            --subjects "puda.*.tlm.ald.*" \
+            --retention limits \
+            --max-age 7d \
+            --max-bytes 10GB \
+            --replicas "$$NATS_STREAM_REPLICAS" \
+            --force
+        else
+          nats_cli stream add ALD_TELEMETRY \
+            --subjects "puda.*.tlm.ald.*" \
+            --retention limits \
+            --storage file \
+            --max-age 7d \
+            --max-bytes 10GB \
+            --replicas "$$NATS_STREAM_REPLICAS" \
+            --defaults
+        fi
+        nats_cli stream info ALD_TELEMETRY --json | jq -e \
+          --argjson replicas "$$NATS_STREAM_REPLICAS" \
+          '(.config.name == "ALD_TELEMETRY") and (.config.subjects == ["puda.*.tlm.ald.*"]) and ((.config.retention | ascii_downcase) == "limits") and ((.config.storage | ascii_downcase) == "file") and (.config.max_age == 604800000000000) and (.config.max_bytes == 10737418240) and (.config.num_replicas == $$replicas)' >/dev/null
+        echo "JetStream stream configuration verified"
+    environment:
+      HOME: /tmp
+      NATS_SERVERS: ${NATS_SERVERS:?Set NATS_SERVERS in .env}
+      NATS_STREAM_REPLICAS: ${NATS_STREAM_REPLICAS:-1}
+      NATS_TIMEOUT: ${NATS_TIMEOUT:-5s}
+      NATS_ALLOW_UNAUTHENTICATED_LOOPBACK: ${NATS_ALLOW_UNAUTHENTICATED_LOOPBACK:-0}
+      NATS_CREDS_FILE: /run/secrets/nats.creds
+      NATS_TLS_CA_FILE: /run/secrets/nats-ca.pem
+      NATS_TLS_CERT_FILE: /run/secrets/nats-client-cert.pem
+      NATS_TLS_KEY_FILE: /run/secrets/nats-client-key.pem
+    volumes:
+      - ./nats-config.sh:/usr/local/lib/nats-config.sh:ro
+    secrets:
+      - source: nats_creds
+        target: nats.creds
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_tls_ca
+        target: nats-ca.pem
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_tls_cert
+        target: nats-client-cert.pem
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_tls_key
+        target: nats-client-key.pem
+        uid: "999"
+        gid: "999"
+        mode: 0400
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=8m,uid=999,gid=999
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     restart: "no"
 
   influxdb-logger:
-    build: .
-    image: pudap/influxdb-logger:telegraf
+    image: ${PUDA_LOGGER_IMAGE_REPOSITORY:?Set immutable logger image repository}@${PUDA_LOGGER_IMAGE_DIGEST:?Set sha256 logger image digest}
     container_name: influxdb-logger
+    user: "${PUDA_LOGGER_RUNTIME_UID:?Set non-root logger UID}:${PUDA_LOGGER_RUNTIME_GID:?Set logger GID}"
     restart: unless-stopped
     network_mode: host
     labels:
-      - "autoheal=true"
+      - "puda.healthcheck=jetstream-consumers"
     env_file:
       - .env
+    environment:
+      INFLUXDB_TOKEN_FILE: /run/secrets/influxdb-token
+      NATS_TIMEOUT: ${NATS_TIMEOUT:-5s}
+      NATS_ALLOW_UNAUTHENTICATED_LOOPBACK: ${NATS_ALLOW_UNAUTHENTICATED_LOOPBACK:-0}
+      NATS_CREDS_FILE: /run/secrets/nats.creds
+      NATS_TLS_CA_FILE: /run/secrets/nats-ca.pem
+      NATS_TLS_CERT_FILE: /run/secrets/nats-client-cert.pem
+      NATS_TLS_KEY_FILE: /run/secrets/nats-client-key.pem
     volumes:
       - ./telegraf.conf.template:/etc/telegraf/telegraf.conf.template:ro
+    secrets:
+      - source: influxdb_token
+        target: influxdb-token
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_creds
+        target: nats.creds
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_tls_ca
+        target: nats-ca.pem
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_tls_cert
+        target: nats-client-cert.pem
+        uid: "999"
+        gid: "999"
+        mode: 0400
+      - source: nats_tls_key
+        target: nats-client-key.pem
+        uid: "999"
+        gid: "999"
+        mode: 0400
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=16m,uid=999,gid=999
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
     depends_on:
       nats-stream-init:
         condition: service_completed_successfully
 
-  # Docker does not restart containers on its own when a HEALTHCHECK reports
-  # "unhealthy" (only Swarm does). This watches for that status on services
-  # labeled autoheal=true and restarts them - needed because the Telegraf
-  # stall that healthcheck.sh detects otherwise persists until someone
-  # notices and manually restarts influxdb-logger.
-  autoheal:
-    image: willfarrell/autoheal:latest
-    container_name: influxdb-logger-autoheal
-    restart: unless-stopped
-    environment:
-      AUTOHEAL_CONTAINER_LABEL: autoheal
-      AUTOHEAL_INTERVAL: 30
-      AUTOHEAL_START_PERIOD: 90
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+secrets:
+  influxdb_token:
+    file: ${INFLUXDB_TOKEN_PATH:?Set INFLUXDB_TOKEN_PATH to the host write-token file}
+  nats_creds:
+    file: ${NATS_CREDS_PATH:?Set NATS_CREDS_PATH to the host NATS credentials file}
+  nats_tls_ca:
+    file: ${NATS_TLS_CA_PATH:?Set NATS_TLS_CA_PATH to the host CA file}
+  nats_tls_cert:
+    file: ${NATS_TLS_CERT_PATH:?Set NATS_TLS_CERT_PATH to the host client certificate}
+  nats_tls_key:
+    file: ${NATS_TLS_KEY_PATH:?Set NATS_TLS_KEY_PATH to the host client private key}

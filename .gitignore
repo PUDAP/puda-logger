@@ -4,3 +4,4 @@ livestream/recordings/
 __pycache__/
 *.pyc
 data/
+influxdb/logger/.demo/

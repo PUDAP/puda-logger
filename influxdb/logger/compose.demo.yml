@@ -1,0 +1,65 @@
+# DEMO ONLY. Loopback NATS without credentials/TLS and a synthetic Influx token.
+# Use compose.yml for any production-like deployment.
+name: puda-logger-demo
+
+services:
+  nats:
+    image: nats:2.11-alpine
+    command: ["-js", "-sd", "/data", "-m", "8222"]
+    ports:
+      - "127.0.0.1:${PUDA_DEMO_NATS_PORT:-4223}:4222"
+      - "127.0.0.1:${PUDA_DEMO_NATS_MONITOR_PORT:-8223}:8222"
+    volumes:
+      - demo-nats-data:/data
+    restart: unless-stopped
+
+  stream-init:
+    image: natsio/nats-box:0.19.2
+    network_mode: host
+    depends_on:
+      - nats
+    entrypoint: ["/bin/sh", "-eu", "-c"]
+    command:
+      - |
+        server="nats://127.0.0.1:$${PUDA_DEMO_NATS_PORT:-4223}"
+        until nats --server "$$server" server check connection >/dev/null 2>&1; do sleep 1; done
+        ensure_stream() {
+          name="$$1"; subject="$$2"; retention="$$3"
+          if nats --server "$$server" stream info "$$name" >/dev/null 2>&1; then return 0; fi
+          nats --server "$$server" stream add "$$name" --subjects "$$subject" \
+            --retention "$$retention" --storage file --replicas 1 --defaults
+        }
+        ensure_stream RESPONSE_QUEUE 'puda.*.cmd.response.queue' interest
+        ensure_stream RESPONSE_IMMEDIATE 'puda.*.cmd.response.immediate' interest
+        ensure_stream ALD_TELEMETRY 'puda.*.tlm.ald.*' limits
+        echo 'Demo JetStream streams are ready.'
+    environment:
+      PUDA_DEMO_NATS_PORT: ${PUDA_DEMO_NATS_PORT:-4223}
+    restart: "no"
+
+  logger:
+    build: .
+    network_mode: host
+    user: "${PUDA_DEMO_UID:-1000}:${PUDA_DEMO_GID:-1000}"
+    depends_on:
+      stream-init:
+        condition: service_completed_successfully
+    environment:
+      INFLUXDB_TOKEN_FILE: /run/demo/influx-token
+      INFLUXDB_URL: http://127.0.0.1:${PUDA_DEMO_INFLUX_PORT:-8182}
+      INFLUXDB_DATABASE: machines
+      INFLUXDB_ORGANIZATION: bears
+      NATS_SERVERS: nats://127.0.0.1:${PUDA_DEMO_NATS_PORT:-4223}
+      NATS_ALLOW_UNAUTHENTICATED_LOOPBACK: "1"
+    volumes:
+      - ./telegraf.conf.template:/etc/telegraf/telegraf.conf.template:ro
+      - ./.demo/influx-token:/run/demo/influx-token:ro
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: unless-stopped
+
+volumes:
+  demo-nats-data:
