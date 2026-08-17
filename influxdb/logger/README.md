@@ -36,9 +36,14 @@ Streams PUDA NATS machine traffic to InfluxDB using [Telegraf](https://docs.infl
 |---|---|---|
 | tag | `machine_id` | parsed from NATS subject |
 | tag | `subject` | NATS subject (added by Telegraf) |
-| field | `data` | full raw JSON payload from the machine |
+| field | `cpu` | `cpu` (float, when present) |
+| field | `mem` | `mem` (float, when present) |
+| field | `temp` | `temp` (float, when present; omitted if JSON `null`) |
+| field | `connected` | `connected` (bool, when present) |
+| field | `status` | `status` (string, when present) |
+| field | `data` | raw JSON, **only** if none of the fields above were present |
 
-Telemetry schemas differ per machine. The logger stores the entire payload as `data` rather than extracting machine-specific fields.
+Telemetry schemas differ per machine. Shared scalars are extracted so Grafana can chart them without storing a duplicate JSON blob on every 1 Hz health ping. Machine-specific extras (Opentrons `run_data`, balance `latest_mass_g`, camera URLs) are not stored.
 
 NATS messages use the raw `puda-comms` wire format (not the JSON envelope the old Python logger constructed internally).
 
