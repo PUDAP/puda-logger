@@ -105,6 +105,11 @@
       rename = "response_message"
       optional = true
     [[inputs.nats_consumer.json_v2.field]]
+      path = "response.data"
+      rename = "response_data"
+      type = "string"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
       path = "response.completed_at"
       rename = "completed_at"
       optional = true
@@ -166,6 +171,11 @@
       rename = "response_message"
       optional = true
     [[inputs.nats_consumer.json_v2.field]]
+      path = "response.data"
+      rename = "response_data"
+      type = "string"
+      optional = true
+    [[inputs.nats_consumer.json_v2.field]]
       path = "response.completed_at"
       rename = "completed_at"
       optional = true
@@ -201,6 +211,26 @@ def apply(metric):
         t = time.parse_time(ts, format="2006-01-02T15:04:05Z07:00", location="UTC")
         metric.time = t.unix_nano
 
+    return metric
+'''
+
+# Prefer response.data for the dashboard Response column when message is empty.
+[[processors.starlark]]
+  namepass = ["commands"]
+  source = '''
+def apply(metric):
+    data = metric.fields.get("response_data")
+    if data == None:
+        return metric
+    if type(data) != "string":
+        data = str(data)
+    if data == "" or data == "null":
+        metric.fields.pop("response_data")
+        return metric
+    msg = metric.fields.get("response_message")
+    if msg == None or msg == "":
+        metric.fields["response_message"] = data
+    metric.fields.pop("response_data")
     return metric
 '''
 

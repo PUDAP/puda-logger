@@ -25,8 +25,8 @@ Streams PUDA NATS machine traffic to InfluxDB using [Telegraf](https://docs.infl
 | field | `step_number` | `command.step_number` |
 | field | `cmd_version` | `command.version` |
 | field | `response_code` | `data.response.code` (responses only) |
-| field | `response_message` | `data.response.message` (responses only) |
-| field | `completed_at` | `data.response.completed_at` (responses only) |
+| field | `response_message` | `response.message`, or `response.data` when message is empty (responses only) |
+| field | `completed_at` | `response.completed_at` (responses only) |
 
 `topic` and `cmd_name` are tags (not fields) so points with the same header timestamp within a run do not overwrite each other in InfluxDB.
 
