@@ -27,8 +27,13 @@ Each NATS message is stored as a timestamped JSON record with InfluxDB-style lab
 | `step_number` | `command.step_number` |
 | `cmd_version` | `command.version` |
 | `response_code` | `response.code` (responses only) |
-| `response_message` | `response.message`, or `response.data` when message is empty (responses only) |
 | `completed_at` | `response.completed_at` (responses only) |
+| `response` | `response.message`, or `response.data` when message is empty, or `response.code` (responses only; truncated at 4000 chars). Commas are stored as `;` so Grafana's batch label parser does not split the value. |
+
+The original NATS JSON is stored unchanged as the record body. Grafana's
+ReductStore plugin flattens JSON content into one column per leaf, so the
+dashboard reads the `response` label — the same value as the Influx
+`response_message` / `response_code` coalesce on the machine command logs.
 
 ### `telemetry` labels
 

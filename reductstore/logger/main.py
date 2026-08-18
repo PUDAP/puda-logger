@@ -124,6 +124,44 @@ def topic_from_subject(subject: str) -> Optional[str]:
     return subject[index + len(marker) :]
 
 
+# Grafana's ReductStore plugin only creates columns from JSON *leaves*, so the
+# dashboard reads a string label. Same source as the Influx command log:
+# response.message, else response.data, else response.code.
+# Grafana queries ReductStore in batch form (`key=value,key=value`). Commas in a
+# label value split into fake columns and crash the plugin, so replace them.
+# Header values must be Latin-1, so use ASCII `;` rather than a Unicode comma.
+RESPONSE_LABEL_MAX_CHARS = 4000
+
+
+def compact_label(value: Any) -> str:
+    if not isinstance(value, str):
+        value = json.dumps(value, ensure_ascii=True, separators=(",", ":"))
+    text = (
+        value.replace("\r", " ")
+        .replace("\n", " ")
+        .replace(",", ";")
+        .encode("ascii", "replace")
+        .decode("ascii")
+    )
+    if len(text) > RESPONSE_LABEL_MAX_CHARS:
+        text = text[: RESPONSE_LABEL_MAX_CHARS - 1] + "..."
+    return text
+
+
+def response_column_value(response: dict) -> Optional[str]:
+    """Match bears-first: COALESCE(response_message, response_code, '')."""
+    message = response.get("message")
+    if message not in (None, "", "null"):
+        return compact_label(message)
+    data = response.get("data")
+    if data not in (None, "", "null"):
+        return compact_label(data)
+    code = response.get("code")
+    if code not in (None, ""):
+        return compact_label(code)
+    return None
+
+
 class LoggerService:
     """Subscribe to PUDA NATS traffic and persist it in ReductStore."""
 
@@ -261,13 +299,10 @@ class LoggerService:
             }
             if msg_type == "response":
                 labels["response_code"] = response.get("code")
-                message = response.get("message")
-                if not message:
-                    data = response.get("data")
-                    if data not in (None, "", "null"):
-                        message = data if isinstance(data, str) else json.dumps(data)
-                labels["response_message"] = message
                 labels["completed_at"] = response.get("completed_at")
+                response_text = response_column_value(response)
+                if response_text:
+                    labels["response"] = response_text
 
             await self.db.write(ENTRY_COMMANDS, msg.data, timestamp, labels)
             ok = True
