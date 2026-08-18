@@ -15,7 +15,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 from nats.aio.client import Client as NATS
 from nats.aio.msg import Msg
-from nats.errors import NotJSMsgError
+from nats.errors import NotJSMessageError
 
 from reduct_client import ENTRY_COMMANDS, ENTRY_TELEMETRY, ReductClient
 
@@ -288,7 +288,7 @@ class LoggerService:
                 await msg.ack()
             else:
                 await msg.nak()
-        except NotJSMsgError:
+        except NotJSMessageError:
             return
 
     async def _on_disconnected(self) -> None:
