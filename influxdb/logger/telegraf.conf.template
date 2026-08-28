@@ -49,12 +49,16 @@
       optional = true
 
 # Command responses: puda.*.cmd.response.queue
+# queue_group is the durable name + deliver group created by nats-init.sh.
+# max_undelivered_messages must match the consumer's max_ack_pending or
+# Telegraf stalls with num_ack_pending pinned at the lower of the two.
 [[inputs.nats_consumer]]
   name_override = "commands"
   servers = ${NATS_SERVERS}
   jetstream_subjects = ["puda.*.cmd.response.queue"]
   jetstream_stream = "RESPONSE_QUEUE"
   queue_group = "puda_logger_cmd_responses_queue"
+  max_undelivered_messages = ${JS_MAX_ACK_PENDING}
   data_format = "json_v2"
 
   [inputs.nats_consumer.tags]
@@ -121,6 +125,7 @@
   jetstream_subjects = ["puda.*.cmd.response.immediate"]
   jetstream_stream = "RESPONSE_IMMEDIATE"
   queue_group = "puda_logger_cmd_responses_immediate"
+  max_undelivered_messages = ${JS_MAX_ACK_PENDING}
   data_format = "json_v2"
 
   [inputs.nats_consumer.tags]

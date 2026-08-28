@@ -3,29 +3,11 @@ services:
     image: natsio/nats-box:latest
     container_name: influxdb-logger-nats-init
     network_mode: host
-    entrypoint: /bin/sh
-    command:
-      - -c
-      - |
-        set -e
-        NATS_URL="$$(echo "$$NATS_SERVERS" | cut -d',' -f1 | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
-        if [ -z "$$NATS_URL" ]; then NATS_URL=nats://localhost:4222; fi
-        echo "Ensuring JetStream response streams on $$NATS_URL"
-        nats stream add RESPONSE_QUEUE \
-          --server "$$NATS_URL" \
-          --subjects "puda.*.cmd.response.queue" \
-          --retention interest \
-          --storage file \
-          --defaults 2>/dev/null || true
-        nats stream add RESPONSE_IMMEDIATE \
-          --server "$$NATS_URL" \
-          --subjects "puda.*.cmd.response.immediate" \
-          --retention interest \
-          --storage file \
-          --defaults 2>/dev/null || true
-        echo "JetStream response streams ready"
+    entrypoint: ["/bin/sh", "/nats-init.sh"]
     env_file:
       - .env
+    volumes:
+      - ./nats-init.sh:/nats-init.sh:ro
     restart: "no"
 
   # Replicas share the NATS queue groups in telegraf.conf.template, so each

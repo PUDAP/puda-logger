@@ -6,8 +6,9 @@
 # recovers on its own or logs an error - the container looks "Up" and quiet
 # while responses silently stop being written to InfluxDB.
 #
-# This script queries each durable consumer directly and reports unhealthy
-# if its ack window is fully saturated, which is the signature of the stall.
+# Durables are pre-created by nats-init.sh (queue_group name, raised
+# max_ack_pending). This script still treats a fully saturated ack window as
+# unhealthy so autoheal can restart the replica.
 # Pair with an autoheal-style watcher (see compose.yml) to actually restart
 # the container when this happens, since Docker does not do this on its own.
 set -eu

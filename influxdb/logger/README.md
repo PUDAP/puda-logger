@@ -53,11 +53,18 @@ NATS messages use the raw `puda-comms` wire format (not the JSON envelope the ol
 
 Command **requests** (`puda.*.cmd.*`) use a plain core NATS subscription. This is safe because command streams use WorkQueue retention — only the machine's execution consumer may bind as a JetStream consumer; a passive core subscription observes traffic without competing for deliveries.
 
-Command **responses** (`puda.*.cmd.response.*`) use Telegraf's `jetstream_subjects` (ephemeral JetStream push consumer) on the `RESPONSE_QUEUE` / `RESPONSE_IMMEDIATE` streams (interest retention), with explicit `jetstream_stream` bindings. Requires Telegraf **1.39+**. A `nats-stream-init` compose service creates these streams idempotently on startup.
+Command **responses** (`puda.*.cmd.response.*`) use Telegraf `jetstream_subjects` bound to **durable push queue consumers** on `RESPONSE_QUEUE` / `RESPONSE_IMMEDIATE`. Those streams use **limits** retention (24h) so messages survive a logger restart. `nats-stream-init` creates the streams and the durables (`puda_logger_cmd_responses_queue` / `puda_logger_cmd_responses_immediate`) before Telegraf starts. Telegraf's `queue_group` is that durable name; because Telegraf did not create the consumer, Unsubscribe on shutdown does not delete it.
 
-**Note:** Telegraf's `nats_consumer` plugin does not yet support durable JetStream consumers. Unlike the previous Python logger, responses published while Telegraf is offline/restarting may be missed.
+Limits, not workqueue: the CLI, postgres-logger, reductstore-logger, and this logger each need a copy of every response. WorkQueue would deliver each message to only one of them.
 
-**Known failure mode:** the response consumers can silently wedge - `num_ack_pending` gets pinned at `max_ack_pending` (default 1000), NATS stops pushing new response messages to Telegraf, and nothing is logged to indicate why. The container keeps running and command *requests* (plain core NATS subscription) keep flowing normally, so this is easy to miss: `commands` measurement rows with `msg_type="response"` simply stop appearing. Restarting the container clears it. A `HEALTHCHECK` (`healthcheck.sh`) detects this by checking whether either durable consumer's ack window is fully saturated, and the `autoheal` sidecar in `compose.yml` restarts the container automatically when that happens.
+`JS_MAX_ACK_PENDING` (default 20000) is set on the durable (`max_ack_pending`) and in Telegraf (`max_undelivered_messages`). The old default of 1000 pins the ack window under burst and NATS stops pushing — responses silently stop while command *requests* keep flowing. Healthcheck + autoheal still restart a replica if the window saturates.
+
+Requires Telegraf **1.39+**. After pulling this change, recreate the init job so existing streams/consumers are updated:
+
+```bash
+docker compose up -d --force-recreate nats-stream-init
+docker compose up -d --force-recreate influxdb-logger
+```
 
 ## Configuration
 
@@ -69,6 +76,7 @@ Command **responses** (`puda.*.cmd.response.*`) use Telegraf's `jetstream_subjec
 | `INFLUXDB_ORGANIZATION` | `bears` | Organization name for `outputs.influxdb_v2` |
 | `NATS_SERVERS` | — | Comma-separated NATS server URLs (`nats-stream-init` uses the first entry) |
 | `LOGGER_REPLICAS` | `1` | Telegraf replicas. Queue groups split work so each NATS message is written once. Start at **1 replica per 10–20k machines**; raise if Telegraf CPU is pegged or logs show `metric buffer overflow` / discarded metrics (`metric_buffer_limit`) |
+| `JS_MAX_ACK_PENDING` | `20000` | JetStream `max_ack_pending` and Telegraf `max_undelivered_messages` for response consumers |
 
 ## Running
 
