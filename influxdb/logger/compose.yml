@@ -28,12 +28,17 @@ services:
       - .env
     restart: "no"
 
+  # Replicas share the NATS queue groups in telegraf.conf.template, so each
+  # message is delivered to exactly one logger. Do not set container_name —
+  # Compose cannot scale a service that pins a single name.
+  # Size: one replica per 10–20k machines; raise LOGGER_REPLICAS if Telegraf
+  # CPU is pegged or logs show metric_buffer_limit drops.
   influxdb-logger:
     build: .
     image: pudap/influxdb-logger:telegraf
-    container_name: influxdb-logger
     restart: unless-stopped
     network_mode: host
+    scale: ${LOGGER_REPLICAS:-1}
     labels:
       - "autoheal=true"
     env_file:
@@ -48,7 +53,7 @@ services:
   # "unhealthy" (only Swarm does). This watches for that status on services
   # labeled autoheal=true and restarts them - needed because the Telegraf
   # stall that healthcheck.sh detects otherwise persists until someone
-  # notices and manually restarts influxdb-logger.
+  # notices and manually restarts the logger replica(s).
   autoheal:
     image: willfarrell/autoheal:latest
     container_name: influxdb-logger-autoheal

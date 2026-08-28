@@ -68,6 +68,7 @@ Command **responses** (`puda.*.cmd.response.*`) use Telegraf's `jetstream_subjec
 | `INFLUXDB_DATABASE` | `puda` | Target database (written as `bucket` in `outputs.influxdb_v2`) |
 | `INFLUXDB_ORGANIZATION` | `bears` | Organization name for `outputs.influxdb_v2` |
 | `NATS_SERVERS` | — | Comma-separated NATS server URLs (`nats-stream-init` uses the first entry) |
+| `LOGGER_REPLICAS` | `1` | Telegraf replicas. Queue groups split work so each NATS message is written once. Start at **1 replica per 10–20k machines**; raise if Telegraf CPU is pegged or logs show `metric buffer overflow` / discarded metrics (`metric_buffer_limit`) |
 
 ## Running
 
@@ -78,7 +79,13 @@ cp .env.example .env   # edit with your values
 docker compose up -d --build   # first run, or after Dockerfile/entrypoint changes
 ```
 
-The `nats-stream-init` service ensures JetStream response streams exist, then starts the Telegraf-based logger.
+The `nats-stream-init` service ensures JetStream response streams exist, then starts the Telegraf-based logger. `LOGGER_REPLICAS` in `.env` sets how many logger containers Compose runs (`scale`). All replicas join the same NATS queue groups, so ingest is partitioned and Influx does not get duplicate points.
+
+If you previously ran a container named `influxdb-logger`, remove it before scaling so it does not keep consuming as an extra queue member: `docker rm -f influxdb-logger`.
+
+**Sizing:** start at **1 replica per 10–20k machines**. Tune from Telegraf CPU and buffer drops — if a replica is at ~100% CPU, or logs contain `metric buffer overflow` / discarded metrics (`metric_buffer_limit` is 100000), add a replica. Extra replicas on a saturated host do not help; spread them across hosts (same `.env` queue groups) if one box is out of CPU.
+
+With more than one replica, the 60s telemetry mean is computed on the health pings that replica received. Grafana queries should `mean(cpu)` (and the other scalars) grouped by `machine_id`.
 
 **Config changes:** `telegraf.conf.template` is mounted into the container. After editing it, restart without rebuilding:
 
