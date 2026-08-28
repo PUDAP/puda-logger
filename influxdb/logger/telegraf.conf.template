@@ -238,12 +238,17 @@ def apply(metric):
 
     connected = data.get("connected")
     if type(connected) == "bool":
-        metric.fields["connected"] = connected
+        # Store as 0/1 so the 60s mean is the fraction of time connected.
+        if connected:
+            metric.fields["connected"] = 1.0
+        else:
+            metric.fields["connected"] = 0.0
         extracted += 1
 
     status = data.get("status")
     if type(status) == "string" and status != "":
-        metric.fields["status"] = status
+        # Tag so it survives aggregators.mean (string fields are dropped).
+        metric.tags["status"] = status
         extracted += 1
 
     # Keep the raw payload only when none of the shared fields were present.
@@ -290,6 +295,15 @@ def apply(metric):
     pattern = '^puda\.([^.]+)\.tlm\.health$'
     replacement = "${1}"
     result_key = "machine_id"
+
+# Edges publish health at 1 Hz. Persist one 60s mean per series so Influx
+# ingest stays tractable as the fleet grows. Commands are not aggregated.
+# delay lets in-flight NATS messages join the window that just closed.
+[[aggregators.mean]]
+  namepass = ["telemetry"]
+  period = "60s"
+  delay = "5s"
+  drop_original = true
 
 [[outputs.influxdb_v2]]
   urls = ["${INFLUXDB_URL}"]

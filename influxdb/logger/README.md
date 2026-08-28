@@ -7,7 +7,7 @@ Streams PUDA NATS machine traffic to InfluxDB using [Telegraf](https://docs.infl
 | Measurement | NATS subjects | Description |
 |---|---|---|
 | `commands` | `puda.*.cmd.*` (requests), `puda.*.cmd.response.*` (responses) | Command/response log |
-| `telemetry` | `puda.*.tlm.health` | Machine health metrics (`cpu`, `mem`, `temp`) |
+| `telemetry` | `puda.*.tlm.health` | Machine health metrics (`cpu`, `mem`, `temp`), stored as a **60s mean** per machine |
 
 ### `commands` fields and tags
 
@@ -32,16 +32,18 @@ Streams PUDA NATS machine traffic to InfluxDB using [Telegraf](https://docs.infl
 
 ### `telemetry` fields and tags
 
+Health is published at 1 Hz on NATS. Telegraf keeps that live subscription but **writes one aggregated point per machine per 60s** (`aggregators.mean`, `drop_original = true`). Field names stay `cpu` / `mem` / `temp`; values are the window mean. Grafana queries do not need to change, but resolution is 1 minute and points appear shortly after each window closes.
+
 | Kind | Name | Source |
 |---|---|---|
 | tag | `machine_id` | parsed from NATS subject |
 | tag | `subject` | NATS subject (added by Telegraf) |
-| field | `cpu` | `cpu` (float, when present) |
-| field | `mem` | `mem` (float, when present) |
-| field | `temp` | `temp` (float, when present; omitted if JSON `null`) |
-| field | `connected` | `connected` (bool, when present) |
-| field | `status` | `status` (string, when present) |
-| field | `data` | raw JSON, **only** if none of the fields above were present |
+| tag | `status` | `status` (string, when present). A tag so it survives mean aggregation; a status change inside the window emits one point per status |
+| field | `cpu` | 60s mean of `cpu` (float, when present) |
+| field | `mem` | 60s mean of `mem` (float, when present) |
+| field | `temp` | 60s mean of `temp` (float, when present; omitted if JSON `null`) |
+| field | `connected` | 60s mean of `connected` as `0.0` / `1.0` (fraction of samples that were true) |
+| field | `data` | raw JSON, **only** if none of the fields above were present (not aggregated; dropped with the 1 Hz originals) |
 
 Telemetry schemas differ per machine. Shared scalars are extracted so Grafana can chart them without storing a duplicate JSON blob on every 1 Hz health ping. Machine-specific extras (Opentrons `run_data`, balance `latest_mass_g`, camera URLs) are not stored.
 
