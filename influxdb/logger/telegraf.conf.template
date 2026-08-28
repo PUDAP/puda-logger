@@ -24,11 +24,11 @@
     [[inputs.nats_consumer.json_v2.tag]]
       path = "header.machine_id"
       rename = "machine_id"
-    [[inputs.nats_consumer.json_v2.tag]]
+    [[inputs.nats_consumer.json_v2.field]]
       path = "header.username"
       rename = "username"
       optional = true
-    [[inputs.nats_consumer.json_v2.tag]]
+    [[inputs.nats_consumer.json_v2.field]]
       path = "header.run_id"
       rename = "run_id"
       optional = true
@@ -72,11 +72,11 @@
     [[inputs.nats_consumer.json_v2.tag]]
       path = "header.machine_id"
       rename = "machine_id"
-    [[inputs.nats_consumer.json_v2.tag]]
+    [[inputs.nats_consumer.json_v2.field]]
       path = "header.username"
       rename = "username"
       optional = true
-    [[inputs.nats_consumer.json_v2.tag]]
+    [[inputs.nats_consumer.json_v2.field]]
       path = "header.run_id"
       rename = "run_id"
       optional = true
@@ -139,11 +139,11 @@
     [[inputs.nats_consumer.json_v2.tag]]
       path = "header.machine_id"
       rename = "machine_id"
-    [[inputs.nats_consumer.json_v2.tag]]
+    [[inputs.nats_consumer.json_v2.field]]
       path = "header.username"
       rename = "username"
       optional = true
-    [[inputs.nats_consumer.json_v2.tag]]
+    [[inputs.nats_consumer.json_v2.field]]
       path = "header.run_id"
       rename = "run_id"
       optional = true
@@ -315,3 +315,6 @@ def apply(metric):
   token = "${INFLUXDB_TOKEN}"
   organization = "${INFLUXDB_ORGANIZATION}"
   bucket = "${INFLUXDB_DATABASE}"
+  # subject is 1:1 with machine_id + topic; drop it after regex processors
+  # have derived those tags so it is not stored as high-cardinality series.
+  tagexclude = ["subject"]

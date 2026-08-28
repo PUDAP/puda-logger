@@ -13,22 +13,23 @@ Streams PUDA NATS machine traffic to InfluxDB using [Telegraf](https://docs.infl
 
 | Kind | Name | Source |
 |---|---|---|
-| tag | `machine_id` | `header.machine_id` (commands); parsed from NATS subject (telemetry) |
+| tag | `machine_id` | `header.machine_id` |
 | tag | `topic` | parsed from NATS subject (`immediate`, `queue`, `response.immediate`, `response.queue`) |
 | tag | `cmd_name` | `command.name` |
 | tag | `msg_type` | static (`command` or `response`) |
-| tag | `status` | `sent` for requests; `data.response.status` for responses |
-| tag | `username` | `header.username` |
-| tag | `run_id` | `header.run_id` |
-| tag | `subject` | NATS subject (added by Telegraf) |
+| tag | `status` | `sent` for requests; `response.status` for responses |
+| field | `run_id` | `header.run_id` |
+| field | `username` | `header.username` |
 | field | `user_id` | `header.user_id` |
 | field | `step_number` | `command.step_number` |
 | field | `cmd_version` | `command.version` |
-| field | `response_code` | `data.response.code` (responses only) |
+| field | `response_code` | `response.code` (responses only) |
 | field | `response_message` | `response.message`, or `response.data` when message is empty (responses only) |
 | field | `completed_at` | `response.completed_at` (responses only) |
 
-`topic` and `cmd_name` are tags (not fields) so points with the same header timestamp within a run do not overwrite each other in InfluxDB.
+Tags are only values used to group/filter that stay bounded (`machine_id`, `topic`, `cmd_name`, `msg_type`, `status`). `run_id` and `username` are fields so a new UUID or user does not create a new series. Telegraf still adds a `subject` tag internally; it is used to derive `topic` / `machine_id` and then dropped on write (`tagexclude`). SQL `WHERE run_id = ...` still works.
+
+If this database already stored `run_id` / `username` as tags, InfluxDB 3 will reject the new field writes (tag and field names cannot overlap). Point a fresh database at `INFLUXDB_DATABASE`, or export and drop the old `commands` table, before restarting the logger.
 
 ### `telemetry` fields and tags
 
@@ -37,7 +38,6 @@ Health is published at 1 Hz on NATS. Telegraf keeps that live subscription but *
 | Kind | Name | Source |
 |---|---|---|
 | tag | `machine_id` | parsed from NATS subject |
-| tag | `subject` | NATS subject (added by Telegraf) |
 | tag | `status` | `status` (string, when present). A tag so it survives mean aggregation; a status change inside the window emits one point per status |
 | field | `cpu` | 60s mean of `cpu` (float, when present) |
 | field | `mem` | 60s mean of `mem` (float, when present) |
