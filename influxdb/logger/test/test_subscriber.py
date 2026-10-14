@@ -161,6 +161,47 @@ def test_health_scalars_status_and_fallback():
     assert "data=" in to_line("puda.first.tlm.health", b'{"custom":42}')
 
 
+def test_driver_stream_fields():
+    line = to_line(
+        "puda.first.tlm.stream.pos",
+        b'{"x":1,"y":2.5,"ready":true,"unit":"mm","missing":null,'
+        b'"axes":[1,2],"meta":{"mode":"xyz"},"mass g,raw=":3,'
+        b'"timestamp":"2026-07-07T09:41:42.123456789Z"}',
+    )
+    assert line.startswith("telemetry_stream,machine_id=first,stream=pos,")
+    assert "x=1.0,y=2.5" in line
+    assert 'ready=true,unit="mm"' in line
+    assert 'axes="[1,2]"' in line
+    assert 'meta="{\\"mode\\":\\"xyz\\"}"' in line
+    assert "mass\\ g\\,raw\\==3.0" in line
+    assert "missing=" not in line
+    assert line.endswith("1783417302123456789")
+
+
+def test_driver_stream_without_timestamp(monkeypatch):
+    monkeypatch.setattr("subscriber.time.time_ns", lambda: 123456789)
+    assert to_line("puda.balance.tlm.stream.weight", b'{"mass_g":10}').endswith(
+        "mass_g=10.0 123456789"
+    )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        b"{}",
+        b'{"x":null}',
+        b'{"x":NaN}',
+        b'{"x":[NaN]}',
+        b'{"":1}',
+        b'{"machine_id":"bad"}',
+        b'{"bad\\nname":1}',
+    ],
+)
+def test_invalid_driver_stream_fields(payload):
+    with pytest.raises(ValueError):
+        to_line("puda.first.tlm.stream.pos", payload)
+
+
 def test_response_data_fallback(command):
     command["response"]["message"] = ""
     command["response"]["data"] = {"result": 42}

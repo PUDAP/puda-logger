@@ -293,15 +293,34 @@ async def test_container_pipeline(tmp_path, encrypted):
                     ).encode(),
                 ),
             )
+            for stream, sample in (
+                ("pos", {"x": 1, "y": 2.5, "ready": True, "sample": name}),
+                ("weight", {"mass_g": 12.5, "unit": "g", "sample": name}),
+            ):
+                subject = "puda.test-machine.tlm.stream." + stream
+                await nc.publish(subject, e2e.seal(subject, json.dumps(sample).encode()))
             await nc.flush()
 
         await publish("initial")
         await eventually(
-            lambda: len([line for body in received for line in body.splitlines()]) >= 5
+            lambda: len([line for body in received for line in body.splitlines()]) >= 7
         )
         lines = [line for body in received for line in body.splitlines()]
         assert sum("cmd_name=initial" in line for line in lines) == 4
         assert any(line.startswith("telemetry,") and "cpu=6" in line for line in lines)
+        streams = [line for line in lines if line.startswith("telemetry_stream,")]
+        assert len(streams) == 2
+        assert any(
+            "stream=pos" in line and "x=1" in line and "ready=true" in line
+            for line in streams
+        )
+        assert any(
+            "stream=weight" in line and "mass_g=12.5" in line and 'unit="g"' in line
+            for line in streams
+        )
+        assert all(
+            'sample="initial"' in line and "_mean" not in line for line in streams
+        )
         assert all("subject=" not in line.split(" ", 1)[0] for line in lines)
         assert all("username=" not in line.split(" ", 1)[0] for line in lines)
         assert not any(

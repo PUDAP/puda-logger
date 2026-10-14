@@ -11,6 +11,7 @@ when configured, maps them to Influx line protocol, and writes to Telegraf's
 |---|---|---|
 | `commands` | `puda.*.cmd.*` (requests), `puda.*.cmd.response.*` (responses) | Command/response log |
 | `telemetry` | `puda.*.tlm.health` | Machine health metrics (`cpu`, `mem`, `temp`), stored as a **60s mean** per machine |
+| `telemetry_stream` | `puda.*.tlm.stream.>` | Driver telemetry samples, stored individually without averaging |
 
 ### `commands` fields and tags
 
@@ -34,9 +35,21 @@ Tags are only values used to group/filter that stay bounded (`machine_id`, `topi
 
 If this database already stored `run_id` / `username` as tags, InfluxDB 3 will reject the new field writes (tag and field names cannot overlap). Point a fresh database at `INFLUXDB_DATABASE`, or export and drop the old `commands` table, before restarting the logger.
 
+### `telemetry_stream` fields and tags
+
+Driver streams use the SDK's `puda.<machine_id>.tlm.stream.<name>` subjects,
+including position on `tlm.stream.pos`. Each sample is stored without health
+averaging, with `machine_id` and `stream` tags. Top-level numbers become float
+fields; booleans and strings retain their types. Objects and arrays become JSON
+string fields, and null values are omitted. Field names are escaped for Influx.
+Empty samples and fields named `machine_id`, `stream`, `subject`, or `time` are
+rejected. Keep each field's type consistent across streams in this measurement.
+An optional RFC3339 `timestamp` supplies the point time; otherwise the logger
+uses receipt time. This works identically with plaintext and E2EE payloads.
+
 ### `telemetry` fields and tags
 
-Health is published at 1 Hz on NATS. Telegraf keeps that live subscription but **writes one aggregated point per machine per 60s** (`aggregators.basicstats` with `stats = ["mean"]` and `drop_original = true`). A rename processor removes the `_mean` suffix so field names stay `cpu` / `mem` / `temp`. Grafana queries do not need to change, but resolution is 1 minute and points appear shortly after each window closes.
+The current SDK publishes host health every 5 seconds by default. Telegraf keeps that live subscription but **writes one aggregated point per machine per 60s** (`aggregators.basicstats` with `stats = ["mean"]` and `drop_original = true`). A rename processor removes the `_mean` suffix so field names stay `cpu` / `mem` / `temp`. Grafana queries do not need to change, but resolution is 1 minute and points appear shortly after each window closes.
 
 | Kind | Name | Source |
 |---|---|---|
@@ -46,9 +59,9 @@ Health is published at 1 Hz on NATS. Telegraf keeps that live subscription but *
 | field | `mem` | 60s mean of `mem` (float, when present) |
 | field | `temp` | 60s mean of `temp` (float, when present; omitted if JSON `null`) |
 | field | `connected` | 60s mean of `connected` as `0.0` / `1.0` (fraction of samples that were true) |
-| field | `data` | raw JSON, **only** if none of the fields above were present (not aggregated; dropped with the 1 Hz originals) |
+| field | `data` | raw JSON, **only** if none of the fields above were present (not aggregated; dropped with the original health samples) |
 
-Telemetry schemas differ per machine. Shared scalars are extracted so Grafana can chart them without storing a duplicate JSON blob on every 1 Hz health ping. Machine-specific extras (Opentrons `run_data`, balance `latest_mass_g`, camera URLs) are not stored.
+Shared health scalars are extracted so Grafana can chart them without storing a duplicate JSON blob on every health sample. Machine-specific extras in health payloads are not stored; publish driver data on `tlm.stream.<name>` to retain it in `telemetry_stream`.
 
 NATS messages use the raw PUDA SDK wire format. The subscriber extracts fields before handing metrics to Telegraf.
 
@@ -56,7 +69,7 @@ NATS messages use the raw PUDA SDK wire format. The subscriber extracts fields b
 
 Command **requests** (`puda.*.cmd.queue` and `puda.*.cmd.immediate`) use core NATS
 subscriptions. They observe traffic without binding to or acknowledging the
-machines' WorkQueue consumers. Health telemetry also uses core NATS.
+machines' WorkQueue consumers. Health and driver telemetry also use core NATS.
 
 Command **responses** use shared durable push queue consumers on `RESPONSE_QUEUE`
 and `RESPONSE_IMMEDIATE` with limits retention (default 24h). Durable names and queue
@@ -69,7 +82,7 @@ init job did. Commands' WorkQueue streams are not changed.
 Responses published while the logger is offline are replayed within stream retention.
 Acknowledgment follows stdout handoff, **not confirmation of an InfluxDB write**.
 Crashes or exhausted Telegraf buffers can still lose data, and redelivery can produce
-duplicates. Core command requests and health telemetry remain live-only.
+duplicates. Core command requests, health, and driver telemetry remain live-only.
 
 `LOGGER_REPLICAS` controls Compose scaling; all replicas share queue groups.
 Healthchecks query the durable acknowledgment windows using the configured TLS
