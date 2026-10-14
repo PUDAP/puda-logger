@@ -294,8 +294,16 @@ async def test_container_pipeline(tmp_path, encrypted):
                 ),
             )
             for stream, sample in (
-                ("pos", {"x": 1, "y": 2.5, "ready": True, "sample": name}),
-                ("weight", {"mass_g": 12.5, "unit": "g", "sample": name}),
+                (
+                    "pos",
+                    {"x": 1, "y": 2.5, "ready": True, "sample": name,
+                     "value": {"axes": [1, 2], "missing": None}},
+                ),
+                (
+                    "weight",
+                    {"mass_g": 12.5, "unit": "g", "sample": name,
+                     "value": 'quoted "text"\nnext\\line µ'},
+                ),
             ):
                 subject = "puda.test-machine.tlm.stream." + stream
                 await nc.publish(subject, e2e.seal(subject, json.dumps(sample).encode()))
@@ -310,17 +318,24 @@ async def test_container_pipeline(tmp_path, encrypted):
         assert any(line.startswith("telemetry,") and "cpu=6" in line for line in lines)
         streams = [line for line in lines if line.startswith("telemetry_stream,")]
         assert len(streams) == 2
-        assert any(
-            "stream=pos" in line and "x=1" in line and "ready=true" in line
-            for line in streams
-        )
-        assert any(
-            "stream=weight" in line and "mass_g=12.5" in line and 'unit="g"' in line
-            for line in streams
-        )
-        assert all(
-            'sample="initial"' in line and "_mean" not in line for line in streams
-        )
+        samples = {}
+        for line in streams:
+            tags, fields = line.split(" ", 1)
+            field_text = fields.rsplit(" ", 1)[0]
+            assert field_text.startswith("data=")
+            sample = json.loads(json.loads(field_text.removeprefix("data=")))
+            stream = next(
+                tag.removeprefix("stream=") for tag in tags.split(",")
+                if tag.startswith("stream=")
+            )
+            samples[stream] = sample
+            assert sample["sample"] == "initial"
+            assert "_mean" not in line
+        assert samples["pos"]["x"] == 1
+        assert samples["pos"]["ready"] is True
+        assert samples["pos"]["value"] == {"axes": [1, 2], "missing": None}
+        assert samples["weight"]["mass_g"] == 12.5
+        assert samples["weight"]["value"] == 'quoted "text"\nnext\\line µ'
         assert all("subject=" not in line.split(" ", 1)[0] for line in lines)
         assert all("username=" not in line.split(" ", 1)[0] for line in lines)
         assert not any(

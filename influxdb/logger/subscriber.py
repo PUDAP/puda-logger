@@ -179,17 +179,9 @@ def to_line(subject: str, payload: bytes) -> str:
     elif len(parts) >= 5 and parts[2:4] == ["tlm", "stream"]:
         measurement = "telemetry_stream"
         tags.update(machine_id=parts[1], stream=".".join(parts[4:]))
-        fields = {}
-        for name, value in data.items():
-            if name == "timestamp" or value is None:
-                continue
-            if not name or name in tags or name == "time":
-                raise ValueError("invalid or reserved stream field name")
-            if isinstance(value, (dict, list)):
-                value = json.dumps(value, separators=(",", ":"), allow_nan=False)
-            fields[name] = field_value(value)
-        if not fields:
-            raise ValueError("stream sample has no fields")
+        fields = {
+            "data": field_value(json.dumps(data, separators=(",", ":"), allow_nan=False))
+        }
         timestamp = timestamp_ns(data.get("timestamp"))
     else:
         if parts[2:] not in (

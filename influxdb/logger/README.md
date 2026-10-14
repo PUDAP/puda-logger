@@ -39,13 +39,19 @@ If this database already stored `run_id` / `username` as tags, InfluxDB 3 will r
 
 Driver streams use the SDK's `puda.<machine_id>.tlm.stream.<name>` subjects,
 including position on `tlm.stream.pos`. Each sample is stored without health
-averaging, with `machine_id` and `stream` tags. Top-level numbers become float
-fields; booleans and strings retain their types. Objects and arrays become JSON
-string fields, and null values are omitted. Field names are escaped for Influx.
-Empty samples and fields named `machine_id`, `stream`, `subject`, or `time` are
-rejected. Keep each field's type consistent across streams in this measurement.
+averaging, with `machine_id` and `stream` tags and a single `data` string field
+containing the complete JSON object. Nested objects, arrays, nulls, and original
+JSON value types are preserved; empty objects are accepted. Invalid JSON and
+non-finite numbers are rejected. Position, weight, and other streams can share
+the table without conflicts between their payload field names or types.
 An optional RFC3339 `timestamp` supplies the point time; otherwise the logger
-uses receipt time. This works identically with plaintext and E2EE payloads.
+uses receipt time. The timestamp also remains in `data`. This works identically
+with plaintext and E2EE payloads. Numeric charts must extract values from `data`.
+
+Existing tables with scalar columns (such as `x`, `y`, or `mass_g`) can keep their
+historical rows. New samples populate `data`, leaving those old columns null;
+historical rows are not backfilled. No table deletion is needed, provided an
+existing `data` column is absent or already a string field (not a tag).
 
 ### `telemetry` fields and tags
 

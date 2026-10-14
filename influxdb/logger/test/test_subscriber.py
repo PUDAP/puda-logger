@@ -161,28 +161,39 @@ def test_health_scalars_status_and_fallback():
     assert "data=" in to_line("puda.first.tlm.health", b'{"custom":42}')
 
 
-def test_driver_stream_fields():
+def stream_data(line):
+    fields = line.split(" ", 1)[1].rsplit(" ", 1)[0]
+    assert fields.startswith("data=")
+    return json.loads(json.loads(fields.removeprefix("data=")))
+
+
+def test_driver_stream_json():
+    payload = {
+        "x": 1,
+        "y": 2.5,
+        "ready": True,
+        "unit": "mm",
+        "missing": None,
+        "axes": [1, 2],
+        "meta": {"mode": "xyz"},
+        "mass g,raw=": 3,
+        "timestamp": "2026-07-07T09:41:42.123456789Z",
+        "label": 'quoted "text"\nnext\\line µ',
+    }
     line = to_line(
-        "puda.first.tlm.stream.pos",
-        b'{"x":1,"y":2.5,"ready":true,"unit":"mm","missing":null,'
-        b'"axes":[1,2],"meta":{"mode":"xyz"},"mass g,raw=":3,'
-        b'"timestamp":"2026-07-07T09:41:42.123456789Z"}',
+        "puda.first.tlm.stream.pos", json.dumps(payload).encode()
     )
     assert line.startswith("telemetry_stream,machine_id=first,stream=pos,")
-    assert "x=1.0,y=2.5" in line
-    assert 'ready=true,unit="mm"' in line
-    assert 'axes="[1,2]"' in line
-    assert 'meta="{\\"mode\\":\\"xyz\\"}"' in line
-    assert "mass\\ g\\,raw\\==3.0" in line
-    assert "missing=" not in line
+    assert stream_data(line) == payload
+    assert "\n" not in line
     assert line.endswith("1783417302123456789")
 
 
 def test_driver_stream_without_timestamp(monkeypatch):
     monkeypatch.setattr("subscriber.time.time_ns", lambda: 123456789)
-    assert to_line("puda.balance.tlm.stream.weight", b'{"mass_g":10}').endswith(
-        "mass_g=10.0 123456789"
-    )
+    line = to_line("puda.balance.tlm.stream.weight", b'{"mass_g":10}')
+    assert line.endswith(" 123456789")
+    assert stream_data(line) == {"mass_g": 10}
 
 
 @pytest.mark.parametrize(
@@ -190,14 +201,29 @@ def test_driver_stream_without_timestamp(monkeypatch):
     [
         b"{}",
         b'{"x":null}',
-        b'{"x":NaN}',
-        b'{"x":[NaN]}',
         b'{"":1}',
         b'{"machine_id":"bad"}',
         b'{"bad\\nname":1}',
     ],
 )
-def test_invalid_driver_stream_fields(payload):
+def test_driver_stream_arbitrary_objects(payload):
+    line = to_line("puda.first.tlm.stream.pos", payload)
+    assert stream_data(line) == json.loads(payload)
+
+
+@pytest.mark.parametrize("value", [1, "one", True, None, [1], {"x": 1}])
+def test_driver_stream_mixed_value_types(value):
+    payload = json.dumps({"value": value}).encode()
+    for stream in ("pos", "weight"):
+        assert stream_data(to_line(f"puda.first.tlm.stream.{stream}", payload)) == {
+            "value": value
+        }
+
+
+@pytest.mark.parametrize(
+    "payload", [b'{"x":NaN}', b'{"x":[Infinity]}', b"[]", b"null", b"not json"]
+)
+def test_invalid_driver_stream_payload(payload):
     with pytest.raises(ValueError):
         to_line("puda.first.tlm.stream.pos", payload)
 
