@@ -11,11 +11,13 @@ import subprocess
 import threading
 import time
 import uuid
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import nats
 import pytest
+from nats.js.api import AckPolicy, ConsumerConfig, RetentionPolicy, StreamConfig
 from puda import e2e
 
 pytestmark = pytest.mark.skipif(
@@ -188,6 +190,41 @@ async def test_container_pipeline(tmp_path, encrypted):
         )
         nc = await nats.connect(server, **options)
         js = nc.jetstream()
+        # Simulate pre-existing upstream streams/durables with custom delivery subjects.
+        for suffix in ("queue", "immediate"):
+            stream = "RESPONSE_" + suffix.upper()
+            durable = "puda_logger_cmd_responses_" + suffix
+            await js.add_stream(
+                config=StreamConfig(
+                    name=stream,
+                    subjects=[f"puda.*.cmd.response.{suffix}"],
+                    retention=RetentionPolicy.LIMITS,
+                    max_age=86400,
+                    max_msgs=10000,
+                )
+            )
+            await js.add_consumer(
+                stream,
+                config=ConsumerConfig(
+                    durable_name=durable,
+                    deliver_subject=f"_INBOX.upstream.{suffix}",
+                    deliver_group=durable,
+                    filter_subject=f"puda.*.cmd.response.{suffix}",
+                    ack_policy=AckPolicy.EXPLICIT,
+                    max_ack_pending=20000,
+                ),
+            )
+        # Shorter aggregation windows keep this test fast; other production settings remain.
+        template = (
+            Path(__file__).resolve().parents[1] / "telegraf.conf.template"
+        ).read_text()
+        test_config = tmp_path / "telegraf.conf.template"
+        test_config.write_text(
+            template.replace('period = "60s"', 'period = "2s"').replace(
+                'delay = "5s"', 'delay = "1s"'
+            )
+        )
+        logger_args += ["-v", f"{test_config}:/etc/telegraf/telegraf.conf.template:ro"]
         docker(
             "run",
             "-d",
@@ -206,6 +243,16 @@ async def test_container_pipeline(tmp_path, encrypted):
         )
         containers.append(logger)
         await eventually(lambda: "Subscriber ready" in docker("logs", logger))
+        docker("exec", logger, "/healthcheck.sh")
+        for suffix in ("queue", "immediate"):
+            info = await js.consumer_info(
+                "RESPONSE_" + suffix.upper(), "puda_logger_cmd_responses_" + suffix
+            )
+            assert info.config.deliver_subject == f"_INBOX.upstream.{suffix}"
+            assert info.config.max_ack_pending == 20000
+            assert (
+                await js.stream_info("RESPONSE_" + suffix.upper())
+            ).config.max_msgs == 10000
         e2e.set_ring(e2e.Ring(encrypt=original_key) if encrypted else None)
 
         async def publish(name):
@@ -239,7 +286,7 @@ async def test_container_pipeline(tmp_path, encrypted):
                     subject,
                     json.dumps(
                         {
-                            "timestamp": "2026-07-07T09:41:42.123456789Z",
+                            "timestamp": datetime.now(timezone.utc).isoformat(),
                             "cpu": 6.0,
                             "sample": name,
                         }
@@ -254,10 +301,9 @@ async def test_container_pipeline(tmp_path, encrypted):
         )
         lines = [line for body in received for line in body.splitlines()]
         assert sum("cmd_name=initial" in line for line in lines) == 4
-        assert any(
-            line.startswith("telemetry,") and line.endswith("1783417302123456789")
-            for line in lines
-        )
+        assert any(line.startswith("telemetry,") and "cpu=6" in line for line in lines)
+        assert all("subject=" not in line.split(" ", 1)[0] for line in lines)
+        assert all("username=" not in line.split(" ", 1)[0] for line in lines)
         assert not any(
             "Error in plugin" in line for line in docker("logs", logger).splitlines()
         )
@@ -326,7 +372,27 @@ async def test_container_pipeline(tmp_path, encrypted):
             "if int(p.name)!=os.getpid() and "
             "b'/opt/puda/subscriber.py' in (p/'cmdline').read_bytes().split(b'\\0')]",
         )
+        await publish("offline")
         await eventually(lambda: docker("logs", logger).count("Subscriber ready") >= 2)
+        await eventually(
+            lambda: (
+                sum(
+                    "cmd_name=offline" in line
+                    for body in received
+                    for line in body.splitlines()
+                )
+                >= 2
+            )
+        )
+        offline = [
+            line
+            for body in received
+            for line in body.splitlines()
+            if "cmd_name=offline" in line
+        ]
+        assert len(offline) == 2
+        assert all("msg_type=response" in line for line in offline)
+        docker("exec", logger, "/healthcheck.sh")
         await publish("restarted")
         await eventually(lambda: any("cmd_name=restarted" in body for body in received))
     finally:

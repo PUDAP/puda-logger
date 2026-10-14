@@ -10,42 +10,47 @@ when configured, maps them to Influx line protocol, and writes to Telegraf's
 | Measurement | NATS subjects | Description |
 |---|---|---|
 | `commands` | `puda.*.cmd.*` (requests), `puda.*.cmd.response.*` (responses) | Command/response log |
-| `telemetry` | `puda.*.tlm.health` | Machine health metrics (`cpu`, `mem`, `temp`) |
+| `telemetry` | `puda.*.tlm.health` | Machine health metrics (`cpu`, `mem`, `temp`), stored as a **60s mean** per machine |
 
 ### `commands` fields and tags
 
 | Kind | Name | Source |
 |---|---|---|
-| tag | `machine_id` | `header.machine_id` (commands); parsed from NATS subject (telemetry) |
+| tag | `machine_id` | `header.machine_id` |
 | tag | `topic` | parsed from NATS subject (`immediate`, `queue`, `response.immediate`, `response.queue`) |
 | tag | `cmd_name` | `command.name` |
 | tag | `msg_type` | static (`command` or `response`) |
 | tag | `status` | `sent` for requests; `response.status` for responses |
-| tag | `username` | `header.username` |
-| tag | `run_id` | `header.run_id` |
-| tag | `subject` | NATS subject (added by the subscriber) |
+| field | `run_id` | `header.run_id` |
+| field | `username` | `header.username` |
 | field | `user_id` | `header.user_id` |
 | field | `step_number` | `command.step_number` |
 | field | `cmd_version` | `command.version` |
-| field | `response_code` | `response.code` (responses only; stored as a string) |
-| field | `response_message` | `response.message` (responses only) |
+| field | `response_code` | `response.code` (responses only) |
+| field | `response_message` | `response.message`, or `response.data` when message is empty (responses only) |
 | field | `completed_at` | `response.completed_at` (responses only) |
 
-`topic` and `cmd_name` are tags (not fields) so points with the same header timestamp within a run do not overwrite each other in InfluxDB.
+Tags are only values used to group/filter that stay bounded (`machine_id`, `topic`, `cmd_name`, `msg_type`, `status`). `run_id` and `username` are fields so a new UUID or user does not create a new series. The subscriber adds a `subject` tag internally; it is used to derive `topic` / `machine_id` and then dropped on write (`tagexclude`). SQL `WHERE run_id = ...` still works.
+
+If this database already stored `run_id` / `username` as tags, InfluxDB 3 will reject the new field writes (tag and field names cannot overlap). Point a fresh database at `INFLUXDB_DATABASE`, or export and drop the old `commands` table, before restarting the logger.
 
 ### `telemetry` fields and tags
+
+Health is published at 1 Hz on NATS. Telegraf keeps that live subscription but **writes one aggregated point per machine per 60s** (`aggregators.basicstats` with `stats = ["mean"]` and `drop_original = true`). A rename processor removes the `_mean` suffix so field names stay `cpu` / `mem` / `temp`. Grafana queries do not need to change, but resolution is 1 minute and points appear shortly after each window closes.
 
 | Kind | Name | Source |
 |---|---|---|
 | tag | `machine_id` | parsed from NATS subject |
-| tag | `subject` | NATS subject (added by the subscriber) |
-| field | `data` | full raw JSON payload from the machine |
+| tag | `status` | `status` (string, when present). A tag so it survives mean aggregation; a status change inside the window emits one point per status |
+| field | `cpu` | 60s mean of `cpu` (float, when present) |
+| field | `mem` | 60s mean of `mem` (float, when present) |
+| field | `temp` | 60s mean of `temp` (float, when present; omitted if JSON `null`) |
+| field | `connected` | 60s mean of `connected` as `0.0` / `1.0` (fraction of samples that were true) |
+| field | `data` | raw JSON, **only** if none of the fields above were present (not aggregated; dropped with the 1 Hz originals) |
 
-Telemetry schemas differ per machine. The logger stores the entire payload as `data` rather than extracting machine-specific fields.
+Telemetry schemas differ per machine. Shared scalars are extracted so Grafana can chart them without storing a duplicate JSON blob on every 1 Hz health ping. Machine-specific extras (Opentrons `run_data`, balance `latest_mass_g`, camera URLs) are not stored.
 
-NATS messages use the raw PUDA SDK wire format, not the envelope constructed by
-the old Python logger. Command timestamps come from `header.timestamp`; telemetry
-uses `timestamp` when present, otherwise receipt time. Nanoseconds are preserved.
+NATS messages use the raw PUDA SDK wire format. The subscriber extracts fields before handing metrics to Telegraf.
 
 ## NATS subscription model
 
@@ -53,17 +58,26 @@ Command **requests** (`puda.*.cmd.queue` and `puda.*.cmd.immediate`) use core NA
 subscriptions. They observe traffic without binding to or acknowledging the
 machines' WorkQueue consumers. Health telemetry also uses core NATS.
 
-Command **responses** use ephemeral JetStream consumers on `RESPONSE_QUEUE` and
-`RESPONSE_IMMEDIATE` with interest retention. The subscriber creates missing
-response streams and validates existing ones without rewriting them. It uses the
-same TLS settings for initialization and subscriptions; no separate init service
-is needed. Consumers start with new messages only.
+Command **responses** use shared durable push queue consumers on `RESPONSE_QUEUE`
+and `RESPONSE_IMMEDIATE` with limits retention (default 24h). Durable names and queue
+groups remain `puda_logger_cmd_responses_queue` and `puda_logger_cmd_responses_immediate`.
+The subscriber initializes streams and consumers using the same TLS settings,
+preserving existing delivery subjects and acknowledgment positions. It sets limits
+retention, maximum age, and the configurable acknowledgment window, as the upstream
+init job did. Commands' WorkQueue streams are not changed.
 
-Responses are acknowledged only after a metric is written and flushed to stdout.
-This confirms pipe handoff, **not an InfluxDB write**. Crashes or exhausted Telegraf
-buffers can lose data. Requests and telemetry are live-only; responses published
-while the logger is offline/restarting may also be missed. This is not a lossless
-audit log. Run one logger instance per destination to avoid duplicate responses.
+Responses published while the logger is offline are replayed within stream retention.
+Acknowledgment follows stdout handoff, **not confirmation of an InfluxDB write**.
+Crashes or exhausted Telegraf buffers can still lose data, and redelivery can produce
+duplicates. Core command requests and health telemetry remain live-only.
+
+`LOGGER_REPLICAS` controls Compose scaling; all replicas share queue groups.
+Healthchecks query the durable acknowledgment windows using the configured TLS
+settings, and the existing autoheal service restarts unhealthy replicas.
+The separate `nats-stream-init` service is no longer required; initialization runs
+in the subscriber. `/nats-init.sh` remains available inside the image for manual
+initialization. With multiple replicas, health means cover each replica's samples;
+queries should combine them by machine as in the upstream configuration.
 
 Decryption failures are logged without payloads or keys. Responses are negatively
 acknowledged with a five-second delay (at most five deliveries); malformed JSON or
@@ -79,6 +93,9 @@ restarts a failed subscriber after ten seconds.
 | `INFLUXDB_TOKEN` | — | Auth token |
 | `INFLUXDB_DATABASE` | `puda` | Target database (written as `bucket` in `outputs.influxdb_v2`) |
 | `INFLUXDB_ORGANIZATION` | `bears` | Organization name for `outputs.influxdb_v2` |
+| `LOGGER_REPLICAS` | `1` | Logger replicas sharing NATS queue groups |
+| `JS_MAX_ACK_PENDING` | `20000` | Maximum outstanding response acknowledgments |
+| `JS_RESPONSE_MAX_AGE` | `24h` | Response stream retention age, e.g. `30m`, `24h`, `1h30m` |
 | `NATS_SERVERS` | — | Comma-separated NATS server URLs |
 | `PUDA_NATS_CA` | unset | Optional TLS CA file path; requires the key file variable too |
 | `PUDA_E2E_KEY_FILE` | unset | Optional shared PUDA key file path; requires the CA variable too |

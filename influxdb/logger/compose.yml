@@ -2,9 +2,11 @@ services:
   influxdb-logger:
     build: .
     image: pudap/influxdb-logger:telegraf
-    container_name: influxdb-logger
     restart: unless-stopped
     network_mode: host
+    scale: ${LOGGER_REPLICAS:-1}
+    labels:
+      - "autoheal=true"
     env_file:
       - .env
     environment:
@@ -26,3 +28,15 @@ services:
         bind:
           create_host_path: false
     # The Python subscriber initializes response streams using the same TLS settings.
+
+  # Restart unhealthy replicas, preserving the upstream healthcheck/autoheal setup.
+  autoheal:
+    image: willfarrell/autoheal:latest
+    container_name: influxdb-logger-autoheal
+    restart: unless-stopped
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: 30
+      AUTOHEAL_START_PERIOD: 90
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock

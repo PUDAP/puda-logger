@@ -6,12 +6,18 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 from puda import e2e
 
-from subscriber import Config, Subscriber, timestamp_ns, to_line
+from subscriber import Config, Subscriber, duration_seconds, timestamp_ns, to_line
 
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    for name in ("NATS_SERVERS", "PUDA_NATS_CA", "PUDA_E2E_KEY_FILE"):
+    for name in (
+        "NATS_SERVERS",
+        "PUDA_NATS_CA",
+        "PUDA_E2E_KEY_FILE",
+        "JS_MAX_ACK_PENDING",
+        "JS_RESPONSE_MAX_AGE",
+    ):
         monkeypatch.delenv(name, raising=False)
     e2e.reset()
     yield
@@ -106,9 +112,9 @@ def test_e2ee_valid_key_bad_ca(monkeypatch, tmp_path):
 def test_command_schema(command):
     line = to_line("puda.first.cmd.queue", json.dumps(command).encode())
     assert line == (
-        "commands,cmd_name=home,machine_id=first,msg_type=command,run_id=run-1,"
-        "status=sent,subject=puda.first.cmd.queue,topic=queue,username=user "
-        'cmd_version="1.0",step_number=1i,user_id="user-1" 1783417302000000000'
+        "commands,cmd_name=home,machine_id=first,msg_type=command,"
+        "status=sent,subject=puda.first.cmd.queue,topic=queue "
+        'cmd_version="1.0",run_id="run-1",step_number=1i,user_id="user-1",username="user" 1783417302000000000'
     )
 
 
@@ -121,13 +127,13 @@ def test_response_schema(command):
     assert "status=success" in line
 
 
-def test_health_raw_json_and_nanosecond_time():
+def test_health_scalars_and_nanosecond_time():
     raw = b'{"timestamp":"2026-07-07T09:41:42.123456789Z","cpu":6.0}'
     line = to_line("puda.first.tlm.health", raw)
     assert line.startswith(
-        "telemetry,machine_id=first,subject=puda.first.tlm.health data="
+        "telemetry,machine_id=first,subject=puda.first.tlm.health cpu=6.0 "
     )
-    assert '\\"cpu\\":6.0' in line
+    assert "data=" not in line
     assert line.endswith("1783417302123456789")
     assert timestamp_ns("2026-07-07T17:41:42.123456789+08:00") == 1783417302123456789
 
@@ -141,7 +147,39 @@ def test_escaping_and_null_fields(command):
     assert "cmd_name=move\\ \\=\\ x\\,y" in line
     assert "\n" not in line
     assert "response_code=" not in line
-    assert "username=ACME\\\\user" in line
+    assert 'username="ACME\\\\user"' in line
+
+
+def test_health_scalars_status_and_fallback():
+    line = to_line(
+        "puda.first.tlm.health",
+        b'{"cpu":2,"mem":4,"temp":null,"connected":true,"status":"ok"}',
+    )
+    assert "connected=1.0,cpu=2.0,mem=4.0" in line
+    assert "status=ok" in line
+    assert "temp=" not in line
+    assert "data=" in to_line("puda.first.tlm.health", b'{"custom":42}')
+
+
+def test_response_data_fallback(command):
+    command["response"]["message"] = ""
+    command["response"]["data"] = {"result": 42}
+    line = to_line("puda.first.cmd.response.queue", json.dumps(command).encode())
+    assert 'response_message="{\\"result\\":42}"' in line
+    assert "response_data=" not in line
+
+
+@pytest.mark.parametrize(
+    "duration,expected", [("24h", 86400), ("1h30m", 5400), ("0.5s", 0.5)]
+)
+def test_response_retention_duration(duration, expected):
+    assert duration_seconds(duration) == expected
+
+
+@pytest.mark.parametrize("duration", ["", "0s", "-1h", "2days"])
+def test_invalid_response_retention_duration(duration):
+    with pytest.raises(ValueError):
+        duration_seconds(duration)
 
 
 @pytest.mark.parametrize("payload", [b"[]", b"{}", b"not json"])

@@ -14,6 +14,11 @@ RUN uv sync --project /opt/puda-project --python /usr/bin/python3 --frozen --no-
 COPY subscriber.py /opt/puda/subscriber.py
 COPY telegraf.conf.template /etc/telegraf/telegraf.conf.template
 COPY docker-entrypoint.sh /docker-entrypoint.sh
-RUN chmod +x /docker-entrypoint.sh
+COPY healthcheck.sh /healthcheck.sh
+COPY nats-init.sh /nats-init.sh
+RUN chmod +x /docker-entrypoint.sh /healthcheck.sh /nats-init.sh
+
+HEALTHCHECK --interval=60s --timeout=15s --start-period=90s --retries=3 \
+    CMD ["/healthcheck.sh"]
 
 ENTRYPOINT ["/docker-entrypoint.sh"]
