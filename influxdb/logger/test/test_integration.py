@@ -260,6 +260,7 @@ async def test_container_pipeline(tmp_path, encrypted):
                 "machine_id": "test-machine",
                 "timestamp": "2026-07-07T09:41:42Z",
                 "username": "ACME\\test user",
+                "run_id": "run-1",
             }
             command = {"name": name, "step_number": 1, "version": "1.0"}
             data = {
@@ -288,6 +289,7 @@ async def test_container_pipeline(tmp_path, encrypted):
                         {
                             "timestamp": datetime.now(timezone.utc).isoformat(),
                             "cpu": 6.0,
+                            "connected": True,
                             "sample": name,
                         }
                     ).encode(),
@@ -316,6 +318,7 @@ async def test_container_pipeline(tmp_path, encrypted):
         lines = [line for body in received for line in body.splitlines()]
         assert sum("cmd_name=initial" in line for line in lines) == 4
         assert any(line.startswith("telemetry,") and "cpu=6" in line for line in lines)
+        assert all("connected=" not in line and "connected_mean=" not in line for line in lines)
         streams = [line for line in lines if line.startswith("telemetry_stream,")]
         assert len(streams) == 2
         samples = {}
@@ -337,7 +340,10 @@ async def test_container_pipeline(tmp_path, encrypted):
         assert samples["weight"]["mass_g"] == 12.5
         assert samples["weight"]["value"] == 'quoted "text"\nnext\\line µ'
         assert all("subject=" not in line.split(" ", 1)[0] for line in lines)
-        assert all("username=" not in line.split(" ", 1)[0] for line in lines)
+        command_lines = [line for line in lines if line.startswith("commands,")]
+        assert all("run_id=run-1" in line for line in command_lines)
+        assert all("username=ACME\\\\test\\ user" in line for line in command_lines)
+        assert all('run_id="' not in line and 'username="' not in line for line in command_lines)
         assert not any(
             "Error in plugin" in line for line in docker("logs", logger).splitlines()
         )

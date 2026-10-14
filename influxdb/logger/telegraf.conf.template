@@ -32,9 +32,6 @@
   [[processors.rename.replace]]
     field = "temp_mean"
     dest = "temp"
-  [[processors.rename.replace]]
-    field = "connected_mean"
-    dest = "connected"
 
 [[outputs.influxdb_v2]]
   urls = ["${INFLUXDB_URL}"]

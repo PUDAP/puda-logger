@@ -169,8 +169,6 @@ def to_line(subject: str, payload: bytes) -> str:
                 and math.isfinite(value)
             ):
                 fields[name] = field_value(float(value))
-        if isinstance(data.get("connected"), bool):
-            fields["connected"] = field_value(float(data["connected"]))
         if isinstance(data.get("status"), str) and data["status"]:
             tags["status"] = data["status"]
         if not fields:
@@ -202,6 +200,10 @@ def to_line(subject: str, payload: bytes) -> str:
             topic=".".join(parts[3:]),
             msg_type="response" if response else "command",
         )
+        for name in ("run_id", "username"):
+            value = header.get(name)
+            if value is not None:
+                tags[name] = value
         step = command["step_number"]
         if (
             isinstance(step, bool)
@@ -211,8 +213,6 @@ def to_line(subject: str, payload: bytes) -> str:
             raise ValueError("step_number must be an int64")
         fields = {"step_number": f"{step}i"}
         for name, value in (
-            ("username", header.get("username")),
-            ("run_id", header.get("run_id")),
             ("user_id", header.get("user_id")),
             ("cmd_version", command.get("version")),
         ):

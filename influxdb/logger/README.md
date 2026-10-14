@@ -22,8 +22,8 @@ when configured, maps them to Influx line protocol, and writes to Telegraf's
 | tag | `cmd_name` | `command.name` |
 | tag | `msg_type` | static (`command` or `response`) |
 | tag | `status` | `sent` for requests; `response.status` for responses |
-| field | `run_id` | `header.run_id` |
-| field | `username` | `header.username` |
+| tag | `run_id` | `header.run_id` (when present) |
+| tag | `username` | `header.username` (when present) |
 | field | `user_id` | `header.user_id` |
 | field | `step_number` | `command.step_number` |
 | field | `cmd_version` | `command.version` |
@@ -31,9 +31,9 @@ when configured, maps them to Influx line protocol, and writes to Telegraf's
 | field | `response_message` | `response.message`, or `response.data` when message is empty (responses only) |
 | field | `completed_at` | `response.completed_at` (responses only) |
 
-Tags are only values used to group/filter that stay bounded (`machine_id`, `topic`, `cmd_name`, `msg_type`, `status`). `run_id` and `username` are fields so a new UUID or user does not create a new series. The subscriber adds a `subject` tag internally; it is used to derive `topic` / `machine_id` and then dropped on write (`tagexclude`). SQL `WHERE run_id = ...` still works.
+Tags identify the context used to group/filter commands, including `run_id` and `username`. A run ID is shared by the commands within a run, and a username can recur across runs. InfluxDB 3 does not have the same tag-cardinality limitation as older engines. The subscriber adds a `subject` tag internally and drops it on write (`tagexclude`).
 
-If this database already stored `run_id` / `username` as tags, InfluxDB 3 will reject the new field writes (tag and field names cannot overlap). Point a fresh database at `INFLUXDB_DATABASE`, or export and drop the old `commands` table, before restarting the logger.
+This matches existing `commands` tables with `run_id` / `username` tags. If a deployment previously stored them as fields, migrate or use a new table/database before switching: InfluxDB 3 cannot change an existing field into a tag in place. Back up historical data before rebuilding any table.
 
 ### `telemetry_stream` fields and tags
 
@@ -64,10 +64,14 @@ The current SDK publishes host health every 5 seconds by default. Telegraf keeps
 | field | `cpu` | 60s mean of `cpu` (float, when present) |
 | field | `mem` | 60s mean of `mem` (float, when present) |
 | field | `temp` | 60s mean of `temp` (float, when present; omitted if JSON `null`) |
-| field | `connected` | 60s mean of `connected` as `0.0` / `1.0` (fraction of samples that were true) |
 | field | `data` | raw JSON, **only** if none of the fields above were present (not aggregated; dropped with the original health samples) |
 
 Shared health scalars are extracted so Grafana can chart them without storing a duplicate JSON blob on every health sample. Machine-specific extras in health payloads are not stored; publish driver data on `tlm.stream.<name>` to retain it in `telemetry_stream`.
+
+`connected` is not extracted or averaged from health messages. The current SDK's
+host-health publisher sends only `cpu`, `mem`, and `temp`. Use heartbeat or
+health-message freshness for availability; driver-specific connection state is
+preserved unchanged inside telemetry stream JSON payloads.
 
 NATS messages use the raw PUDA SDK wire format. The subscriber extracts fields before handing metrics to Telegraf.
 

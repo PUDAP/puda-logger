@@ -113,8 +113,8 @@ def test_command_schema(command):
     line = to_line("puda.first.cmd.queue", json.dumps(command).encode())
     assert line == (
         "commands,cmd_name=home,machine_id=first,msg_type=command,"
-        "status=sent,subject=puda.first.cmd.queue,topic=queue "
-        'cmd_version="1.0",run_id="run-1",step_number=1i,user_id="user-1",username="user" 1783417302000000000'
+        "run_id=run-1,status=sent,subject=puda.first.cmd.queue,topic=queue,username=user "
+        'cmd_version="1.0",step_number=1i,user_id="user-1" 1783417302000000000'
     )
 
 
@@ -147,7 +147,24 @@ def test_escaping_and_null_fields(command):
     assert "cmd_name=move\\ \\=\\ x\\,y" in line
     assert "\n" not in line
     assert "response_code=" not in line
-    assert 'username="ACME\\\\user"' in line
+    assert "username=ACME\\\\user " in line
+
+
+@pytest.mark.parametrize("value", [None, ""])
+def test_optional_command_context_tags(command, value):
+    command["header"]["run_id"] = value
+    command["header"]["username"] = value
+    line = to_line("puda.first.cmd.queue", json.dumps(command).encode())
+    assert "run_id=" not in line
+    assert "username=" not in line
+
+
+def test_command_context_tag_escaping(command):
+    command["header"]["run_id"] = "run = 1,2"
+    command["header"]["username"] = "test user"
+    line = to_line("puda.first.cmd.queue", json.dumps(command).encode())
+    assert "run_id=run\\ \\=\\ 1\\,2" in line
+    assert "username=test\\ user " in line
 
 
 def test_health_scalars_status_and_fallback():
@@ -155,7 +172,8 @@ def test_health_scalars_status_and_fallback():
         "puda.first.tlm.health",
         b'{"cpu":2,"mem":4,"temp":null,"connected":true,"status":"ok"}',
     )
-    assert "connected=1.0,cpu=2.0,mem=4.0" in line
+    assert "cpu=2.0,mem=4.0" in line
+    assert "connected=" not in line
     assert "status=ok" in line
     assert "temp=" not in line
     assert "data=" in to_line("puda.first.tlm.health", b'{"custom":42}')
@@ -165,6 +183,16 @@ def stream_data(line):
     fields = line.split(" ", 1)[1].rsplit(" ", 1)[0]
     assert fields.startswith("data=")
     return json.loads(json.loads(fields.removeprefix("data=")))
+
+
+@pytest.mark.parametrize("connected", [True, False])
+def test_connected_is_only_preserved_in_json(connected):
+    payload = json.dumps({"connected": connected}).encode()
+    health = to_line("puda.first.tlm.health", payload)
+    assert "connected=" not in health
+    assert stream_data(health) == {"connected": connected}
+    stream = to_line("puda.first.tlm.stream.device", payload)
+    assert stream_data(stream) == {"connected": connected}
 
 
 def test_driver_stream_json():
