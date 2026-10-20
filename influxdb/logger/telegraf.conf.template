@@ -1,5 +1,6 @@
 [agent]
   interval = "10s"
+  # Keep normal ingestion latency low; slow requests use the output timeout.
   flush_interval = "5s"
   metric_batch_size = 1000
   metric_buffer_limit = 100000
@@ -34,6 +35,8 @@
     dest = "temp"
 
 [[outputs.influxdb_v2]]
+  # Tolerate brief NAS/network stalls; failed writes remain buffered for retry.
+  timeout = "20s"
   urls = ["${INFLUXDB_URL}"]
   token = "${INFLUXDB_TOKEN}"
   organization = "${INFLUXDB_ORGANIZATION}"

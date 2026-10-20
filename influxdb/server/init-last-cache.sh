@@ -20,7 +20,9 @@ while [ "$i" -lt 60 ]; do
     break
   fi
   # ping may not exist on 3.9; HTTP health is enough
-  if command -v python3 >/dev/null 2>&1; then
+  if command -v curl >/dev/null 2>&1; then
+    curl -sf "$HOST/health" >/dev/null && break || true
+  elif command -v python3 >/dev/null 2>&1; then
     python3 -c "import urllib.request; urllib.request.urlopen('$HOST/health', timeout=2)" 2>/dev/null && break || true
   fi
   i=$((i + 1))
