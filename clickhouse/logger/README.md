@@ -56,7 +56,11 @@ response delivery subjects (`puda.logger.clickhouse.deliver.*`) are independent
 of InfluxDB/ReductStore, so other backends still receive their own copies.
 Replicas of this backend share its groups/durables to balance work. Missing
 response streams are created with Limits retention and a 24-hour max age;
-existing streams are validated, **not mutated**. Non-Limits streams fail closed.
+existing Limits- or Interest-retention streams are validated, **not mutated**.
+WorkQueue streams fail closed because logging must not compete with machine
+consumers. Interest retention preserves messages only while matching consumer
+interest exists; it does not promise replay from before this logger's consumer
+was created.
 A NATS operator can pre-provision the streams/consumers if the logger lacks
 management permissions. Consumers use explicit ACK, 120s ACK wait, unlimited
 redeliveries, and the configured maximum unacknowledged window. Existing

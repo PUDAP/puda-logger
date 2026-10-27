@@ -185,6 +185,33 @@ async def test_streams_are_limits_only_and_consumer_names_independent():
 
 
 @pytest.mark.asyncio
+async def test_existing_interest_streams_are_accepted_without_mutation():
+    from subscriber import RESPONSE_STREAMS
+
+    sub = service()
+    configs = {
+        name: StreamConfig(name=name, subjects=[subject], retention=RetentionPolicy.INTEREST)
+        for name, subject in RESPONSE_STREAMS.items()
+    }
+
+    async def stream_info(name):
+        return SimpleNamespace(config=configs[name])
+
+    sub.js = SimpleNamespace(
+        stream_info=AsyncMock(side_effect=stream_info),
+        add_stream=AsyncMock(),
+        update_stream=AsyncMock(),
+        consumer_info=AsyncMock(side_effect=NotFoundError),
+        add_consumer=AsyncMock(),
+    )
+    await sub.ensure_streams()
+    sub.js.add_stream.assert_not_awaited()
+    sub.js.update_stream.assert_not_awaited()
+    assert sub.js.add_consumer.await_count == 2
+    assert all(c.retention == RetentionPolicy.INTEREST for c in configs.values())
+
+
+@pytest.mark.asyncio
 async def test_subscriptions_never_use_machine_jetstream_consumers():
     from subscriber import RESPONSE_CONSUMERS
 

@@ -133,7 +133,8 @@ async def eventually(predicate, timeout=20):
 
 
 @pytest.mark.asyncio
-async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp_path):
+@pytest.mark.parametrize("retention", [RetentionPolicy.LIMITS, RetentionPolicy.INTEREST])
+async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp_path, retention):
     config, db = services
     # Prove the HTTP endpoint cannot execute queries without authentication.
     from urllib.error import HTTPError
@@ -175,7 +176,7 @@ async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp
         ("RESPONSE_IMMEDIATE", "puda.*.cmd.response.immediate"),
     ]:
         await js.add_stream(
-            config=StreamConfig(name=stream, subjects=[subject], max_age=7200)
+            config=StreamConfig(name=stream, subjects=[subject], max_age=7200, retention=retention)
         )
     influx = await js.pull_subscribe(
         "puda.*.cmd.response.queue",

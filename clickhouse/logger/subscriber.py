@@ -82,10 +82,12 @@ class Subscriber:
             else:
                 if (
                     subject not in (info.config.subjects or [])
-                    or info.config.retention != RetentionPolicy.LIMITS
+                    or info.config.retention not in (
+                        RetentionPolicy.LIMITS, RetentionPolicy.INTEREST
+                    )
                 ):
                     raise ValueError(
-                        "Response stream requires the expected subject and Limits retention"
+                        "Response stream requires the expected subject and Limits or Interest retention"
                     )
                 # Existing retention/age belongs to the broker operator, not this backend.
             durable = RESPONSE_CONSUMERS[stream]
