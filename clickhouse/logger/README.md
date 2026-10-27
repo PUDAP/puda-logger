@@ -22,10 +22,13 @@ docker compose up -d
 docker compose logs --tail 50 logger
 ```
 
-Compose uses **Linux host networking**, with no published ports. Python does not
-read dotenv files implicitly. For direct execution install `requirements.txt`
-and export environment variables explicitly; `python subscriber.py --check-config`
-validates configuration without connecting. `--healthcheck` checks database
+Compose uses **Linux host networking**, with no published ports. Dependencies
+are declared in `pyproject.toml` and pinned in `uv.lock`; the Docker build uses
+`uv sync --locked --no-dev --no-install-project`, with no requirements file.
+Python does not read dotenv files implicitly. For direct execution run
+`uv sync --locked`, export environment variables explicitly, then run
+`uv run --locked subscriber.py --check-config` to validate without connecting.
+`--healthcheck` checks database
 credentials and table readability only; it does **not** certify a running NATS
 subscriber or recent ingestion. No misleading container healthcheck is provided.
 `docker compose stop` allows 75 seconds for SIGTERM/draining the current batches.
@@ -121,12 +124,11 @@ permissions must allow these KV reads and response stream/consumer management.
 ## Tests (no production connections)
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt 'pytest>=8,<10' 'pytest-asyncio>=0.24,<2'
-.venv/bin/pytest -q
+uv sync --locked
+uv run --locked pytest -q
 # Opt-in: needs access to a local Docker daemon. Starts isolated temporary
 # containers with random loopback ports; removes only its own containers/network.
-RUN_DOCKER_INTEGRATION=1 .venv/bin/pytest tests/test_integration.py -q
+RUN_DOCKER_INTEGRATION=1 uv run --locked pytest tests/test_integration.py -q
 ```
 
 Unit tests use real loopback HTTP transport, real SDK AES-GCM/rotation and
