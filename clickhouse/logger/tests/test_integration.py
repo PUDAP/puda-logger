@@ -1,4 +1,4 @@
-"""Opt-in, disposable local Docker test. Never reads .env or lab endpoints."""
+"""Opt-in disposable Docker/native services. Never reads .env or lab endpoints."""
 
 import asyncio
 import json
@@ -21,8 +21,8 @@ from test_logger import command
 pytestmark = [
     pytest.mark.integration,
     pytest.mark.skipif(
-        os.getenv("RUN_DOCKER_INTEGRATION") != "1",
-        reason="set RUN_DOCKER_INTEGRATION=1 for disposable Docker services",
+        os.getenv("RUN_DOCKER_INTEGRATION") != "1" and os.getenv("RUN_NATIVE_INTEGRATION") != "1",
+        reason="set RUN_DOCKER_INTEGRATION=1 or RUN_NATIVE_INTEGRATION=1",
     ),
 ]
 ROOT = Path(__file__).resolve().parents[2]
@@ -40,6 +40,11 @@ def docker(*args, **kwargs):
 
 @pytest.fixture
 def services(tmp_path):
+    if os.getenv("RUN_NATIVE_INTEGRATION") == "1":
+        from native_services import native_services
+        with native_services(ROOT, tmp_path) as pair:
+            yield pair
+        return
     docker("version", "--format", "{{.Server.Version}}")
     prefix = "puda-ch-test-" + uuid.uuid4().hex[:12]
     network, ch, broker = prefix + "-net", prefix + "-db", prefix + "-nats"
@@ -121,6 +126,37 @@ def services(tmp_path):
         subprocess.run(
             ["docker", "network", "rm", network], capture_output=True, timeout=30
         )
+
+
+def test_additive_schema_and_offline_backfill_against_real_database(services):
+    from backfill import convert
+    from storage import to_row
+    _, db = services
+    raw = b'{"timestamp":"2026-07-07T09:41:42Z","status":"ok","custom":{"v":[null,1]}}'
+    legacy = to_row("puda.robot.tlm.health", raw)
+    legacy.pop("data")
+    legacy["stream"] = ""
+    legacy["received_ns"] = 1783417302999999999
+    db.request("INSERT INTO puda.events FORMAT JSONEachRow", (json.dumps(legacy) + "\n").encode())
+    # DDL is repeatable and must not mutate the old rows.
+    schema = (ROOT / "server/initdb/002-split-events.sql").read_text()
+    for _ in range(2):
+        for sql in schema.split(";"):
+            if sql.strip():
+                db.request(sql)
+    exported = [json.loads(line) for line in db.request("SELECT * FROM puda.events FORMAT JSONEachRow").splitlines()]
+    converted = list(convert(exported))
+    db.write([row for _, row in converted])
+    assert db.request("SELECT count() FROM puda.events").strip() == b"1"
+    stored = json.loads(db.request("SELECT data, raw_json, received_ns, stream FROM puda.telemetry FORMAT JSONEachRow"))
+    assert int(stored["received_ns"]) == 1783417302999999999
+    assert stored["raw_json"] == raw.decode() and stored["stream"] == "health"
+    assert json.loads(stored["data"]) == {"status": "ok", "custom": {"v": [None, 1]}}
+    # Exercise the executable query examples against the real schema.
+    examples = (ROOT / "server/README.md").read_text().split("## Query examples", 1)[1].split("```sql", 1)[1].split("```", 1)[0]
+    for sql in examples.split(";"):
+        if sql.strip():
+            db.request(sql)
 
 
 async def eventually(predicate, timeout=20):
@@ -234,7 +270,7 @@ async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp
         await nc.flush()
 
         async def six_rows():
-            return await query("SELECT count() FROM puda.events") == "6"
+            return await query("SELECT (SELECT count() FROM puda.command_logs) + (SELECT count() FROM puda.telemetry)") == "6"
 
         await eventually(six_rows)
         assert len(other) == 4
@@ -246,15 +282,32 @@ async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp
         await responses[0].ack()
         stored = json.loads(
             await query(
-                "SELECT event_ns, toUnixTimestamp64Nano(event_time) AS ns, raw_json FROM puda.events WHERE msg_type='response' LIMIT 1 FORMAT JSONEachRow"
+                "SELECT event_ns, toUnixTimestamp64Nano(event_time) AS ns, raw_json, user_id, username, cmd_version FROM puda.command_logs WHERE msg_type='response' LIMIT 1 FORMAT JSONEachRow"
             )
         )
         assert int(stored["event_ns"]) == 1783417302123456789
         assert int(stored["ns"]) == 1783417302123456789
         assert stored["raw_json"] == raw.decode()
-        assert await query("SELECT uniqExact(msg_type) FROM puda.events") == "4"
+        assert (stored["user_id"], stored["username"], stored["cmd_version"]) == ("user-1", "tester", "1.0")
+        assert await query("SELECT uniqExact(msg_type) FROM puda.command_logs") == "2"
+        assert await query("SELECT count() FROM puda.events") == "0"
+        for suffix in ("health", "stream.position"):
+            actual = {"status": "ready", "nested": {"values": [1, None]}, "data": {"custom": 2}}
+            envelope = json.dumps({"timestamp": "2026-07-07T11:41:42.123456789+02:00", "data": actual}, indent=2)
+            await nc.publish("puda.robot.tlm." + suffix, envelope.encode())
+            await nc.flush()
+
+            async def telemetry_received():
+                return await query("SELECT count() FROM puda.telemetry WHERE subject='puda.robot.tlm." + suffix + "' AND raw_json=" + "'" + envelope.replace("'", "\\'") + "'") == "1"
+
+            await eventually(telemetry_received)
+            stored_tlm = [json.loads(line) for line in (await query("SELECT stream, data, raw_json, event_ns FROM puda.telemetry WHERE subject='puda.robot.tlm." + suffix + "' FORMAT JSONEachRow")).splitlines()]
+            row = next(row for row in stored_tlm if row["raw_json"] == envelope)
+            assert json.loads(row["data"]) == actual
+            assert row["stream"] == ("health" if suffix == "health" else "position")
+            assert int(row["event_ns"]) == 1783417302123456789
         # Real database insert failure must leave a response pending, then redeliver after repair.
-        await query("RENAME TABLE puda.events TO puda.events_off")
+        await query("RENAME TABLE puda.command_logs TO puda.command_logs_off")
         outage = command()
         outage["header"]["run_id"] = "outage"
         await nc.publish("puda.robot.cmd.response.queue", json.dumps(outage).encode())
@@ -267,15 +320,22 @@ async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp
             return info.num_ack_pending > 0
 
         await eventually(unacked)
+        async def observed_failure():
+            return "ClickHouse batch write failed" in log.read_text()
+        await eventually(observed_failure)
+        # The other backend ACKs its own copy during the outage. In Interest
+        # mode the ClickHouse durable must still retain an independent copy.
+        other_outage = await influx.fetch(1, timeout=3)
+        await other_outage[0].ack()
         assert (
-            await query("SELECT count() FROM puda.events_off WHERE run_id='outage'")
+            await query("SELECT count() FROM puda.command_logs_off WHERE run_id='outage'")
             == "0"
         )
-        await query("RENAME TABLE puda.events_off TO puda.events")
+        await query("RENAME TABLE puda.command_logs_off TO puda.command_logs")
 
         async def replayed():
             return (
-                await query("SELECT count() FROM puda.events WHERE run_id='outage'")
+                await query("SELECT count() FROM puda.command_logs WHERE run_id='outage'")
                 == "1"
             )
 
@@ -290,7 +350,10 @@ async def test_real_nats_clickhouse_delivery_failure_and_isolation(services, tmp
             return info.num_ack_pending == 0 and info.num_pending == 0
 
         await eventually(settled)
-        assert await query("SELECT count() FROM puda.events") == "7"
+        assert await query("SELECT count() FROM puda.command_logs") == "5"
+        assert await query("SELECT count() FROM puda.telemetry") == "4"
+        for name in ("RESPONSE_QUEUE", "RESPONSE_IMMEDIATE"):
+            assert (await js.stream_info(name)).config.retention == retention
     finally:
         proc.terminate()
         try:

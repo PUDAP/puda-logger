@@ -34,14 +34,23 @@ when appropriate (create it interactively; do not put real passwords in Git):
 
 ```sql
 CREATE USER puda_logger IDENTIFIED WITH sha256_password BY 'replace-me';
-GRANT INSERT, SELECT ON puda.events TO puda_logger;
+GRANT INSERT, SELECT ON puda.command_logs TO puda_logger;
+GRANT INSERT, SELECT ON puda.telemetry TO puda_logger;
 ```
 
-The initialization SQL creates `puda.events` only on a **new** data volume.
+The initialization SQL creates `puda.command_logs`, `puda.telemetry` and the
+retained legacy `puda.events` only on a **new** data volume.
 Changing the SQL is not a migration. To apply additive changes to an existing
 instance, review and run them with `clickhouse-client --multiquery`; never delete
 volumes to apply a schema change. `CLICKHOUSE_DB` is intentionally fixed to `puda`
 in Compose to match the checked-in SQL.
+
+Existing installations must explicitly apply `initdb/002-split-events.sql`
+before upgrading the logger/server healthcheck. Follow [MIGRATION.md](MIGRATION.md)
+for grants, cutover, optional offline/staged backfill, rollback and idempotency
+risks. The new logger never writes the legacy table. Both new tables use monthly
+MergeTree partitions with no TTL, retaining `raw_json`; telemetry `data` is JSON
+text in a String, not native JSON or fixed cpu/mem/temp columns.
 
 `docker compose stop` preserves data. `docker compose down` removes containers
 and the network but preserves named volumes. **`down -v` destroys data.** Back up
@@ -61,12 +70,22 @@ endpoint. Other containers need an explicitly configured private network.
 ```sql
 SELECT event_time, machine_id, run_id, cmd_name, step_number, status,
        JSONExtractString(raw_json, 'response', 'message') AS response_message
-FROM puda.events
+FROM puda.command_logs
 WHERE machine_id = 'robot' AND run_id = 'run-1'
 ORDER BY event_time;
 
-SELECT event_time, stream, raw_json FROM puda.events
-WHERE msg_type = 'telemetry_stream' ORDER BY event_time DESC LIMIT 100;
+SELECT event_time, machine_id, msg_type, stream, data
+FROM puda.telemetry
+WHERE machine_id = 'robot' ORDER BY event_time DESC LIMIT 100;
+
+SELECT event_time, JSONExtractString(data, 'status') AS status,
+       JSONExtractRaw(data, 'nested') AS nested_measurements
+FROM puda.telemetry WHERE stream = 'health'
+ORDER BY event_time DESC LIMIT 100;
+
+SELECT event_time, user_id, username, cmd_version, cmd_name, status
+FROM puda.command_logs WHERE run_id = 'run-1'
+ORDER BY event_time;
 ```
 
 ## Official references

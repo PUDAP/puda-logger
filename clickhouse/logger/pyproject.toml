@@ -11,4 +11,4 @@ dev = ["pytest>=8,<10", "pytest-asyncio>=0.24,<2"]
 asyncio_mode = "auto"
 pythonpath = ["."]
 testpaths = ["tests"]
-markers = ["integration: disposable Docker ClickHouse and NATS (opt-in)"]
+markers = ["integration: disposable Docker or native ClickHouse and NATS (opt-in)"]

@@ -50,7 +50,7 @@ def test_real_http_batches_and_waits_for_confirmed_insert(http_server):
     )
     client = ClickHouse(config)
     client.write(
-        [{"event_ns": 1783417302123456789, "raw_json": '{"x":1}'}, {"event_ns": 2}]
+        [{"msg_type": "command", "event_ns": 1783417302123456789, "raw_json": '{"x":1}'}, {"msg_type": "command", "event_ns": 2}]
     )
     path, headers, body = records[0]
     assert "fake-secret" not in path and headers["X-ClickHouse-Key"] == "fake-secret"
@@ -60,11 +60,11 @@ def test_real_http_batches_and_waits_for_confirmed_insert(http_server):
     assert rows[0]["event_ns"] == 1783417302123456789 and len(rows) == 2
     server.status, server.body = 500, b"fake-secret payload secret"
     with pytest.raises(RuntimeError) as caught:
-        client.write([{"event_ns": 1}])
+        client.write([{"msg_type": "command", "event_ns": 1}])
     assert "fake-secret" not in str(caught.value)
     server.status, server.body = 200, b"Code: 241. secret failed after headers"
     with pytest.raises(RuntimeError):
-        client.write([{"event_ns": 1}])
+        client.write([{"msg_type": "command", "event_ns": 1}])
 
 
 def test_http_redirect_is_not_followed(http_server):
@@ -75,5 +75,5 @@ def test_http_redirect_is_not_followed(http_server):
     with pytest.raises(RuntimeError):
         ClickHouse(
             Config([], f"http://127.0.0.1:{server.server_port}", "test", "secret")
-        ).write([{}])
+        ).write([{"msg_type": "command"}])
     assert len(records) == 1

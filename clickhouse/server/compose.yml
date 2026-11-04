@@ -23,7 +23,7 @@ services:
       - ./initdb:/docker-entrypoint-initdb.d:ro
       - ./config.d/resources.xml:/etc/clickhouse-server/config.d/puda-resources.xml:ro
     healthcheck:
-      test: ["CMD-SHELL", "clickhouse-client --host 127.0.0.1 --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT count() FROM puda.events WHERE 0' >/dev/null"]
+      test: ["CMD-SHELL", "clickhouse-client --host 127.0.0.1 --user \"$${CLICKHOUSE_USER}\" --password \"$${CLICKHOUSE_PASSWORD}\" --query 'SELECT (SELECT count() FROM puda.command_logs WHERE 0) + (SELECT count() FROM puda.telemetry WHERE 0)' >/dev/null"]
       interval: 15s
       timeout: 10s
       start_period: 60s

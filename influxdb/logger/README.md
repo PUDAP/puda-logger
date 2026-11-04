@@ -48,6 +48,15 @@ An optional RFC3339 `timestamp` supplies the point time; otherwise the logger
 uses receipt time. The timestamp also remains in `data`. This works identically
 with plaintext and E2EE payloads. Numeric charts must extract values from `data`.
 
+For the new SDK `{timestamp, data: {...}}` wire envelope, the subscriber unwraps
+the inner object once for stream `data` and health scalar/status extraction;
+point time comes from the outer timestamp. Legacy flattened messages continue
+to work as described above, including retaining their timestamp in stream JSON.
+Detection requires exactly the two outer keys and object-valued `data`; legacy
+`data` measurements with extra siblings are not unwrapped. A legacy object with
+only those two keys is ambiguous and treated as the new envelope. Upgrade this
+subscriber before SDK publishers; audit custom consumers and timestamp queries.
+
 Existing tables with scalar columns (such as `x`, `y`, or `mass_g`) can keep their
 historical rows. New samples populate `data`, leaving those old columns null;
 historical rows are not backfilled. No table deletion is needed, provided an

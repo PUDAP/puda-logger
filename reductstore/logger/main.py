@@ -241,10 +241,17 @@ class LoggerService:
         ok = False
         try:
             payload = self._decode_json(msg)
-            body = unwrap_body(payload) if isinstance(payload, dict) else {}
-            timestamp = parse_iso_timestamp(body.get("timestamp")) or datetime.now(
-                timezone.utc
-            )
+            if (
+                isinstance(payload, dict)
+                and set(payload) == {"timestamp", "data"}
+                and isinstance(payload["data"], dict)
+            ):
+                body = payload["data"]
+                time_value = payload["timestamp"]
+            else:
+                body = unwrap_body(payload) if isinstance(payload, dict) else {}
+                time_value = body.get("timestamp")
+            timestamp = parse_iso_timestamp(time_value) or datetime.now(timezone.utc)
             labels = {
                 "machine_id": machine_id_from_subject(msg.subject)
                 or body.get("machine_id"),

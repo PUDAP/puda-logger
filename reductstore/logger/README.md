@@ -51,6 +51,15 @@ NATS messages use the raw `puda-comms` wire format (not the JSON envelope the ol
 
 Record timestamps come from `header.timestamp` (commands) or `timestamp` (telemetry). ReductStore requires unique timestamps per entry; collisions increment by 1 µs.
 
+New SDK health messages use exactly `{timestamp, data: {...}}`: the logger reads
+labels from the inner object and record time from the outer timestamp, retaining
+the original body unchanged. Old flattened health and the older internal
+envelopes remain accepted. Exact two-key, object-valued `data` detection takes
+precedence; an identical legacy shape is inherently ambiguous. Upgrade consumers
+before SDK publishers. Raw-body dashboards must account for metrics moving
+under `data`; command/response mapping and subjects are unchanged. This backend
+still subscribes only to health, not named telemetry streams.
+
 ## NATS subscription model
 
 Command **requests** (`puda.*.cmd.*`) use a plain core NATS subscription. This is safe because command streams use WorkQueue retention — only the machine's execution consumer may bind as a JetStream consumer; a passive core subscription observes traffic without competing for deliveries.

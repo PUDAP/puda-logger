@@ -63,7 +63,7 @@ def test_health_and_stream_without_timestamp_use_receipt_time():
     before = time.time_ns()
     row = to_row("puda.robot.tlm.health", b'{"cpu":4.5,"mem":null}')
     assert before <= row["event_ns"] <= time.time_ns()
-    assert row["cpu"] == 4.5 and row["mem"] is None
+    assert json.loads(row["data"]) == {"cpu": 4.5, "mem": None}
     row = to_row("puda.robot.tlm.stream.position", b'{"x":1}')
     assert row["stream"] == "position" and row["msg_type"] == "telemetry_stream"
     assert timestamp_ns("2026-07-07T11:41:42.123456789+02:00") == 1783417302123456789
@@ -88,7 +88,22 @@ def test_config_requires_credentials_and_validates_identifiers(monkeypatch):
 
     env(monkeypatch)
     config = Config.from_env()
-    assert config.database == "puda" and config.table == "events"
+    assert config.database == "puda"
+    assert config.command_table == "command_logs" and config.telemetry_table == "telemetry"
+    for name in ("CLICKHOUSE_COMMAND_TABLE", "CLICKHOUSE_TELEMETRY_TABLE"):
+        with monkeypatch.context() as local:
+            local.setenv(name, "bad;sql")
+            with pytest.raises(ValueError):
+                Config.from_env()
+    with monkeypatch.context() as local:
+        local.setenv("CLICKHOUSE_TABLE", "events")
+        with pytest.raises(ValueError, match="CLICKHOUSE_TABLE"):
+            Config.from_env()
+    with monkeypatch.context() as local:
+        local.setenv("CLICKHOUSE_COMMAND_TABLE", "same")
+        local.setenv("CLICKHOUSE_TELEMETRY_TABLE", "same")
+        with pytest.raises(ValueError):
+            Config.from_env()
     for key, value in [
         ("CLICKHOUSE_PASSWORD", ""),
         ("CLICKHOUSE_DATABASE", "puda; DROP TABLE events"),

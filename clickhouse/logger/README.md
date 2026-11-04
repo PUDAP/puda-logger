@@ -92,19 +92,48 @@ incompatible ClickHouse consumers fail closed rather than resetting their cursor
 
 ## Schema and timestamps
 
-`puda.events` stores the **unchanged decrypted UTF-8 JSON text** in `raw_json`;
-params/kwargs, nested response data, unknown fields and response completion time
-remain available with ClickHouse JSON extraction functions. Encryption framing
-is not retained and the stored plaintext must be protected like other lab data.
-Columns expose machine/run/user/command/step/status/topic/telemetry-stream and
-CPU/memory/temperature. Commands use `header.timestamp`; health/streams use their
-optional top-level timestamp, otherwise receipt time (current SDK health and
-arbitrary stream dicts may omit it). RFC3339 fractions/offsets are converted using
-integer arithmetic: `event_ns` retains all nine fractional digits, with a UTC
-`DateTime64(9)` materialized `event_time`. Supported timestamps are nonnegative
-Int64 nanoseconds (1970 through April 2262), not silently rounded floats.
-The table is append-only MergeTree, partitioned monthly with **no automatic TTL**.
-Provision retention/backups explicitly. `received_ns` records logger receipt time.
+`puda.command_logs` keeps commands and responses together, exposing
+machine/run/user/command/step/status/topic metadata, including `user_id`,
+`username`, and `cmd_version`. `puda.telemetry` exposes machine/time/msg_type/topic
+and `stream` (`health` for health; the complete suffix for named streams).
+Telemetry `data` is **JSON text in a String**, not ClickHouse native JSON, and has
+no fixed CPU/memory/temperature columns. Nested objects, arrays, nulls, status,
+and arbitrary measurements survive without schema changes.
+
+Both tables retain the **unchanged decrypted UTF-8 JSON text** in `raw_json`.
+Params, nested response data, unknown fields and response completion time remain
+queryable with JSON extraction functions. Encryption framing is not retained;
+protect the stored plaintext like other lab data. No SDK dependency upgrade is
+required to read either telemetry wire shape:
+
+- Legacy flattened `{timestamp, cpu, custom, ...}`: `data` contains all fields
+  except the outer timestamp.
+- New SDK `{timestamp, data: {...}}`: unwrap the inner object **once**, retaining
+  even its own `timestamp` and `data` measurement keys.
+- Envelope detection requires **exactly** the two keys `timestamp` and `data`,
+  with an object-valued `data`. Extra siblings, a missing timestamp or non-object
+  `data` remain legacy fields. There is no invented marker. An old flattened
+  payload consisting solely of those two keys with object-valued `data` is
+  inherently indistinguishable and is interpreted as the new envelope. Audit
+  such publishers before rollout; the original is always retained in `raw_json`.
+
+Commands use `header.timestamp`; telemetry uses the optional outer timestamp,
+otherwise receipt time. RFC3339 fractions/offsets use integer arithmetic;
+`event_ns` retains nine digits with UTC `DateTime64(9)` materialized `event_time`.
+Supported timestamps are nonnegative Int64 nanoseconds (1970 through April
+2262). Both append-only MergeTree tables are partitioned monthly, with **no TTL**;
+provision retention/backups explicitly. `received_ns` records receipt time.
+
+`CLICKHOUSE_COMMAND_TABLE` and `CLICKHOUSE_TELEMETRY_TABLE` default to
+`command_logs` and `telemetry`. They must differ. The retired `CLICKHOUSE_TABLE`
+is rejected, even if empty, to prevent a silent cutover. Review the
+[non-destructive migration and backfill procedure](../server/MIGRATION.md)
+before upgrading an existing installation. The legacy `puda.events` is untouched.
+
+A mixed batch makes two independent synchronous INSERTs, commands first. There
+is no cross-table transaction. If the second insert fails, responses are NAKed
+even if commands already persisted; redelivery can duplicate those responses.
+An empty batch issues no INSERT. Fingerprints are not uniqueness constraints.
 
 ## TLS + E2EE and rotation
 
@@ -133,12 +162,24 @@ uv run --locked pytest -q
 # Opt-in: needs access to a local Docker daemon. Starts isolated temporary
 # containers with random loopback ports; removes only its own containers/network.
 RUN_DOCKER_INTEGRATION=1 uv run --locked pytest tests/test_integration.py -q
+# Native fallback: use checksum-verified official ClickHouse/NATS executables.
+# All service ports are random loopback ports; data is disposable. No .env read.
+RUN_NATIVE_INTEGRATION=1 \
+  CLICKHOUSE_TEST_BINARY=/absolute/path/to/clickhouse \
+  NATS_TEST_BINARY=/absolute/path/to/nats-server \
+  uv run --locked pytest tests/test_integration.py -q
 ```
 
 Unit tests use real loopback HTTP transport, real SDK AES-GCM/rotation and
 controlled NATS boundaries. Integration exercises real ClickHouse/NATS, all six
 subject shapes, command WorkQueue isolation, backend consumer independence,
-nanosecond/raw-text preservation and response retry across a database failure.
+nanosecond/raw-text preservation, old/new telemetry envelopes, additive DDL and
+offline backfill, and response retry across a database failure. Both Limits and
+Interest response retention are tested without changing the broker policy. The
+native mode runs the same assertions, not a simulation; it does not verify the
+Docker image/build/entrypoint. Use only downloaded, checksum-verified test
+binaries, not a live service path/config. `pytest` temporary data defaults to
+`TMPDIR`; native child processes are terminated by fixture cleanup.
 
 References: [HTTP](https://clickhouse.com/docs/interfaces/http),
 [JSONEachRow](https://clickhouse.com/docs/interfaces/formats/JSONEachRow),

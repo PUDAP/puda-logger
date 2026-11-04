@@ -23,7 +23,8 @@ class Config:
     user: str
     password: str
     database: str = "puda"
-    table: str = "events"
+    command_table: str = "command_logs"
+    telemetry_table: str = "telemetry"
     encrypted: bool = False
     connect_options: dict = field(default_factory=dict)
     max_ack_pending: int = 4096
@@ -123,12 +124,23 @@ class Config:
             raise ValueError(
                 "CLICKHOUSE_URL must be an http(s) origin without credentials, path, query or fragment"
             )
+        if "CLICKHOUSE_TABLE" in os.environ:
+            raise ValueError(
+                "Replace CLICKHOUSE_TABLE with CLICKHOUSE_COMMAND_TABLE and "
+                "CLICKHOUSE_TELEMETRY_TABLE after migration"
+            )
         identifiers = {}
-        for name, default in (("DATABASE", "puda"), ("TABLE", "events")):
+        for name, default in (
+            ("DATABASE", "puda"),
+            ("COMMAND_TABLE", "command_logs"),
+            ("TELEMETRY_TABLE", "telemetry"),
+        ):
             value = os.getenv("CLICKHOUSE_" + name, default)
             if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]{0,63}", value):
                 raise ValueError(f"CLICKHOUSE_{name} must be a SQL identifier")
             identifiers[name.lower()] = value
+        if identifiers["command_table"] == identifiers["telemetry_table"]:
+            raise ValueError("Command and telemetry tables must differ")
         return cls(
             servers=servers,
             url=url,
@@ -178,6 +190,20 @@ class ClickHouse:
             raise RuntimeError("ClickHouse request failed") from None
 
     def write(self, rows):
+        groups = {self.config.command_table: [], self.config.telemetry_table: []}
+        for row in rows:
+            kind = row["msg_type"]
+            if kind in ("command", "response"):
+                groups[self.config.command_table].append(row)
+            elif kind in ("telemetry", "telemetry_stream"):
+                groups[self.config.telemetry_table].append(row)
+            else:
+                raise ValueError("Unsupported row type")
+        for table, batch in groups.items():
+            if batch:
+                self._write_table(table, batch)
+
+    def _write_table(self, table, rows):
         body = b"".join(
             (
                 json.dumps(
@@ -188,7 +214,7 @@ class ClickHouse:
             for row in rows
         )
         result = self.request(
-            f"INSERT INTO `{self.config.database}`.`{self.config.table}` FORMAT JSONEachRow",
+            f"INSERT INTO `{self.config.database}`.`{table}` FORMAT JSONEachRow",
             body,
         )
         # INSERT success has an empty body. Even HTTP 200 can contain late errors.
@@ -196,13 +222,11 @@ class ClickHouse:
             raise RuntimeError("ClickHouse insert was not confirmed")
 
     def check(self):
-        if (
-            self.request(
-                f"SELECT count() FROM `{self.config.database}`.`{self.config.table}` WHERE 0"
-            ).strip()
-            != b"0"
-        ):
-            raise RuntimeError("ClickHouse schema check failed")
+        for table in (self.config.command_table, self.config.telemetry_table):
+            if self.request(
+                f"SELECT count() FROM `{self.config.database}`.`{table}` WHERE 0"
+            ).strip() != b"0":
+                raise RuntimeError("ClickHouse schema check failed")
 
 
 def timestamp_ns(value):
@@ -245,19 +269,8 @@ def to_row(subject, payload):
     row = dict(
         subject=subject,
         machine_id=parts[1],
-        run_id="",
-        cmd_name="",
-        step_number=None,
-        username="",
-        user_id="",
-        cmd_version="",
-        status="",
-        stream="",
         topic=".".join(parts[3:]),
         msg_type="",
-        cpu=None,
-        mem=None,
-        temp=None,
         received_ns=time.time_ns(),
         raw_json=payload.decode("utf-8"),
         event_id=hashlib.sha256(subject.encode() + b"\0" + payload).hexdigest(),
@@ -266,17 +279,17 @@ def to_row(subject, payload):
         len(parts) >= 5 and parts[2:4] == ["tlm", "stream"]
     ):
         row["msg_type"] = "telemetry" if parts[3] == "health" else "telemetry_stream"
-        row["stream"] = ".".join(parts[4:])
+        row["stream"] = "health" if parts[3] == "health" else ".".join(parts[4:])
         row["event_ns"] = timestamp_ns(data.get("timestamp"))
-        for key in ("cpu", "mem", "temp"):
-            value = data.get(key)
-            if isinstance(value, (int, float)) and not isinstance(value, bool):
-                # Overflow to float is an invalid metric rather than a poisoned insert.
-                row[key] = float(value)
-                if not math.isfinite(row[key]):
-                    raise ValueError("invalid metric")
-        if isinstance(data.get("status"), str):
-            row["status"] = data["status"]
+        # Exact two-key object envelope only; legacy objects with extra fields
+        # (including their own `data` measurement) must not lose those fields.
+        if set(data) == {"timestamp", "data"} and isinstance(data["data"], dict):
+            values = data["data"]
+        else:
+            values = {key: value for key, value in data.items() if key != "timestamp"}
+        row["data"] = json.dumps(
+            values, ensure_ascii=False, allow_nan=False, separators=(",", ":"),
+        )
         return row
     if parts[2:] not in (
         ["cmd", "queue"],

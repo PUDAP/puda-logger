@@ -157,20 +157,26 @@ def to_line(subject: str, payload: bytes) -> str:
     if len(parts) < 4 or parts[0] != "puda":
         raise ValueError("unsupported subject")
     tags = {"subject": subject}
+    # Match the SDK's exact {timestamp, data} telemetry envelope only. Keep
+    # legacy flattened objects with a data measurement and siblings intact.
+    if set(data) == {"timestamp", "data"} and isinstance(data["data"], dict):
+        values = data["data"]
+    else:
+        values = data
     if parts[2:] == ["tlm", "health"]:
         measurement = "telemetry"
         tags["machine_id"] = parts[1]
         fields = {}
         for name in ("cpu", "mem", "temp"):
-            value = data.get(name)
+            value = values.get(name)
             if (
                 isinstance(value, (int, float))
                 and not isinstance(value, bool)
                 and math.isfinite(value)
             ):
                 fields[name] = field_value(float(value))
-        if isinstance(data.get("status"), str) and data["status"]:
-            tags["status"] = data["status"]
+        if isinstance(values.get("status"), str) and values["status"]:
+            tags["status"] = values["status"]
         if not fields:
             fields["data"] = field_value(payload.decode("utf-8"))
         timestamp = timestamp_ns(data.get("timestamp"))
@@ -178,7 +184,7 @@ def to_line(subject: str, payload: bytes) -> str:
         measurement = "telemetry_stream"
         tags.update(machine_id=parts[1], stream=".".join(parts[4:]))
         fields = {
-            "data": field_value(json.dumps(data, separators=(",", ":"), allow_nan=False))
+            "data": field_value(json.dumps(values, separators=(",", ":"), allow_nan=False))
         }
         timestamp = timestamp_ns(data.get("timestamp"))
     else:
