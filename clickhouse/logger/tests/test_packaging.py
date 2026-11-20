@@ -6,6 +6,11 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 
 
+def test_server_pins_verified_latest_stable_image():
+    compose = (ROOT.parent / "server/compose.yml").read_text()
+    assert "clickhouse/clickhouse-server:26.10.2.103@sha256:b2bfa4d8399ee9973868cc5c1754cb506a6f4b86fbddc41010cc090beb55c85e" in compose
+
+
 def test_additive_split_schema_keeps_legacy_initialization():
     schema = ROOT.parent / "server/initdb/002-split-events.sql"
     assert schema.is_file(), "Add the two-table schema without replacing legacy events"

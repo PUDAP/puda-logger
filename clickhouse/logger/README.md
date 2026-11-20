@@ -1,10 +1,36 @@
 # PUDA NATS → ClickHouse logger
 
+An opt-in **direct native NATS-engine + SQL E2EE ingestion path** is implemented
+and tested locally; see [NATIVE.md](NATIVE.md) for control-plane commands,
+acceptance coverage and deployment gates. The Python logger below remains the
+unchanged rollback path; native ingestion is not enabled by this Compose file.
+
 Python 3.11+ and `puda==0.0.19rc1`, matching the existing InfluxDB logger's E2EE
 wire implementation. No Telegraf or ClickHouse client SDK is required. The
 standard-library HTTP transport sends `JSONEachRow` batches synchronously with
 `async_insert=0` and `wait_end_of_query=1`; it checks both HTTP status and an empty
 INSERT response body before acknowledging any response messages.
+
+## Python file roles
+
+All five original top-level Python files are used; they are not five competing
+workers. The refactor adds one pure-SQL module:
+
+| File | Purpose / when used |
+|---|---|
+| `subscriber.py` | **Default Docker entrypoint and rollback data path**: Python subscriptions, E2EE/keyring handling, batching and response ACKs. |
+| `storage.py` | Shared configuration, HTTP client and Python wire normalization; used by the subscriber, native control CLI and migration tooling. |
+| `backfill.py` | **Optional offline migration CLI**: converts exported legacy rows into split-table JSONEachRow files. Not a running service or part of the Docker image. |
+| `native_control.py` | **Opt-in native control CLI**: private-key bootstrap, installation and one-shot encrypted KV key sync. Never subscribes to data messages. |
+| `native_ingest.py` | Native control helpers: private key files, historical-key synchronization and separate pull-consumer provisioning. Retains existing SQL imports as compatibility exports. |
+| `native_sql.py` | Pure native DDL and directly reusable SELECT builders, including SQL E2EE/normalization and endpoint/path validation. No filesystem or network I/O. |
+
+Docker still copies only `subscriber.py` and `storage.py` and starts the Python
+subscriber. Native ingestion requires explicit operator installation; it is not
+a default-path replacement. Keep the Python deployment for rollback, and avoid
+running both into the same destination unless duplicate rows are intentional.
+See [NATIVE.md](NATIVE.md) for local-only acceptance and unresolved production
+gates, and [MIGRATION.md](../server/MIGRATION.md) for optional legacy backfill.
 
 ## Configure and run
 

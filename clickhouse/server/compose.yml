@@ -1,7 +1,7 @@
 name: puda-clickhouse
 services:
   clickhouse:
-    image: clickhouse/clickhouse-server:25.8.33.6@sha256:0152dd511befe6a2c2ef53e930726179669b08116da78500b37c51c96ff5ee77
+    image: clickhouse/clickhouse-server:26.10.2.103@sha256:b2bfa4d8399ee9973868cc5c1754cb506a6f4b86fbddc41010cc090beb55c85e
     restart: unless-stopped
     environment:
       CLICKHOUSE_DB: puda

@@ -1,7 +1,12 @@
 # ClickHouse server
 
-Uses the official `clickhouse/clickhouse-server:25.8.33.6` image pinned to its
-multi-platform digest. HTTP and native ports bind **127.0.0.1 and the LAN IPv4
+Uses the official `clickhouse/clickhouse-server:26.10.2.103` image pinned to its
+multi-platform digest (latest stable release verified on November 4, 2026).
+This is a repository configuration update, not an automatic upgrade of an
+existing database. Back up and test the official upgrade path for your deployed
+version before recreating its container; never delete volumes to upgrade.
+
+HTTP and native ports bind **127.0.0.1 and the LAN IPv4
 192.168.50.135**. Override `CLICKHOUSE_LAN_IP` in `.env` when deploying elsewhere
 or if DHCP changes this host's address. They do not bind all interfaces.
 `nofile=262144`, persistent data/log volumes, authenticated schema healthcheck,
