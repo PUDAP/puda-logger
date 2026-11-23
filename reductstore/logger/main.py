@@ -325,6 +325,11 @@ class LoggerService:
             return {}
 
     async def _finish(self, msg: Msg, ok: bool) -> None:
+        # Only JetStream deliveries are acked. Core command requests (including
+        # `puda.<id>.cmd.ping`) carry the requester's reply inbox; acking them
+        # would send +ACK/-NAK to the CLI ahead of the machine's real reply.
+        if not (msg.reply or "").startswith("$JS.ACK."):
+            return
         try:
             if ok:
                 await msg.ack()
